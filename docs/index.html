@@ -376,10 +376,15 @@ const crewEditorBody = $("crew-editor-body");
 const sessionsGrid = $("sessions-grid");
 
 // --- 状態 -----------------------------------------------------------
-// アップロード済みのセッション。各要素は
-//   { id, filename, metadata: {serial, sessionName, totalDistance, totalTimeStr}, data }
+// アップロード済みの NK セッション。各要素は
+//   { id, filename, metadata: {serial, sessionName, date, startTime, ...}, data,
+//     polarId: null | Polar セッション ID }
 let sessions = [];
+// Polar セッション。各要素は
+//   { id, filename, metadata: {date, startTime, durationStr, avgHr, ...}, samples: [{t, hr}] }
+let polarSessions = [];
 let nextSessionId = 1;
+let nextPolarId = 1;
 
 // セッションごとに生成した Chart.js インスタンス (メトリック変更時に destroy するため)。
 const chartRegistry = new Map();
@@ -405,6 +410,65 @@ function crewKeyFor(session) {
 function crewNameFor(session) {
   const key = crewKeyFor(session);
   return crewNames[key] || (session.metadata.serial ? `SN ${session.metadata.serial}` : session.filename);
+}
+
+// =========================================================================
+// Polar HR を NK のストロークに時刻で合わせる
+// =========================================================================
+// NK の各ストローク (elapsed_s) に対応する Polar HR を線形補間で算出する。
+// 両者とも「セッション開始からの経過秒」を軸に持つ。ただし
+//   - NK の Session Start Time と Polar の Start time に差がある場合は
+//     その差 (polarOffsetSec) だけ NK 側を進める / 戻す。
+//   - 絶対時刻がどちらかに無い場合は polarOffsetSec=0 (同時開始と仮定)。
+function calcAutoOffset(nkMeta, polarMeta) {
+  // どちらも startTime を持っていれば wall-clock で揃える。
+  // 返り値: NK の経過秒 0 (= NK 開始時刻) に対応する Polar 側の t。
+  //   polar_t_for(nk_elapsed) = nk_elapsed + (nkStart - polarStart)
+  // Polar が NK より前に開始していれば (nkStart - polarStart) > 0 なので、
+  // NK elapsed=0 の時点で Polar は既に数十〜数百秒経過している。
+  if (!nkMeta || !polarMeta) return 0;
+  if (!nkMeta.startTime || !polarMeta.startTime) return 0;
+  const nkT = wallClockSeconds(nkMeta.startTime);
+  const polarT = wallClockSeconds(polarMeta.startTime);
+  if (nkT == null || polarT == null) return 0;
+  return nkT - polarT;
+}
+
+function interpolatePolarHr(nkElapsed, polarSamples, offsetSec) {
+  // polarSamples: 時刻昇順。各 { t: 秒, hr: bpm }。
+  // nkElapsed:  NK の経過秒 (ストローク時刻)。
+  // offsetSec:  NK elapsed=0 に対応する Polar 側の t (calcAutoOffset が返す値)。
+  if (!polarSamples || !polarSamples.length) return NaN;
+  const target = nkElapsed + offsetSec;  // 対応する Polar 時刻。
+  // 範囲外は端の値で代用 (あるいは NaN にしてもよいが、最低限 HR 値が出る方が便利)。
+  if (target <= polarSamples[0].t) return polarSamples[0].hr;
+  const last = polarSamples[polarSamples.length - 1];
+  if (target >= last.t) return last.hr;
+  // 二分探索でサンプル区間を特定。
+  let lo = 0, hi = polarSamples.length - 1;
+  while (lo < hi - 1) {
+    const mid = (lo + hi) >> 1;
+    if (polarSamples[mid].t <= target) lo = mid;
+    else hi = mid;
+  }
+  const a = polarSamples[lo], b = polarSamples[hi];
+  const dt = b.t - a.t;
+  if (dt <= 0) return a.hr;
+  const w = (target - a.t) / dt;
+  return a.hr * (1 - w) + b.hr * w;
+}
+
+// 指定された NK セッションに Polar を適用したデータ配列を返す (副作用なし)。
+// 未ペアなら元の data をそのまま返す。
+function sessionEffectiveData(session) {
+  if (!session.polarId) return session.data;
+  const polar = polarSessions.find((p) => p.id === session.polarId);
+  if (!polar) return session.data;
+  const offset = calcAutoOffset(session.metadata, polar.metadata);
+  return session.data.map((r) => {
+    const hr = interpolatePolarHr(r.elapsed_s, polar.samples, offset);
+    return { ...r, hr: isNaN(hr) ? r.hr : hr };
+  });
 }
 
 // =========================================================================
@@ -831,7 +895,7 @@ function renderSessionCards() {
   chartRegistry.clear();
   sessionsGrid.innerHTML = "";
 
-  if (sessions.length === 0) {
+  if (sessions.length === 0 && polarSessions.length === 0) {
     topToolbar.classList.add("hidden");
     return;
   }
@@ -839,7 +903,8 @@ function renderSessionCards() {
   const metric = metricSelect.value;
   const zones = readZonesFromUI();
   topToolbar.classList.remove("hidden");
-  sessionCountEl.textContent = `${sessions.length} 件のセッション · 指標: ${METRIC_LABELS[metric]}`;
+  const polarPart = polarSessions.length ? `  ·  Polar ${polarSessions.length} 件` : "";
+  sessionCountEl.textContent = `${sessions.length} 件の NK セッション${polarPart}  ·  指標: ${METRIC_LABELS[metric]}`;
 
   // クルー名順 → 読み込み順でソート (同じクルーはまとめて表示)。
   const sorted = [...sessions].sort((a, b) => {
@@ -858,7 +923,9 @@ function buildCard(session, metric, zones) {
   const card = document.createElement("div");
   card.className = "session-card";
 
-  const hasValue = session.data.some((r) => !isNaN(r[metric]));
+  // Polar が紐付いていればその HR を適用したデータを使う。
+  const data = sessionEffectiveData(session);
+  const hasValue = data.some((r) => !isNaN(r[metric]));
   if (!hasValue) {
     card.innerHTML = `
       <div class="crew">${escapeHtml(crewNameFor(session))}</div>
@@ -874,7 +941,7 @@ function buildCard(session, metric, zones) {
     return card;
   }
 
-  const { annotated, summary, total } = analyze(session.data, metric, zones);
+  const { annotated, summary, total } = analyze(data, metric, zones);
   const colors = zoneColors(summary.map((r) => r.zone));
 
   const distanceStr = session.metadata.totalDistance != null
@@ -884,13 +951,31 @@ function buildCard(session, metric, zones) {
   const serialStr = session.metadata.serial
     ? `SN ${escapeHtml(session.metadata.serial)}` : "(シリアル未検出)";
 
+  // Polar ドロップダウン: アップロード済みの Polar セッションから選択。
+  const polarOptions = polarSessions.map((p) => {
+    const label = `${p.filename}` +
+      (p.metadata.startTime ? ` (${p.metadata.startTime})` : "");
+    const sel = session.polarId === p.id ? " selected" : "";
+    return `<option value="${p.id}"${sel}>${escapeHtml(label)}</option>`;
+  }).join("");
+  const polarRow = polarSessions.length
+    ? `<div class="meta" style="margin-top: 4px;">
+         Polar HR:
+         <select data-act="pair" style="font-size: 0.8rem; padding: 2px 6px;">
+           <option value="">(使わない)</option>${polarOptions}
+         </select>
+         ${session.polarId ? '<span style="color: #059669;">✓ 同期中</span>' : ""}
+       </div>`
+    : "";
+
   card.innerHTML = `
     <div class="crew">${escapeHtml(crewNameFor(session))}</div>
     <div class="meta">${serialStr} · ${escapeHtml(session.filename)}${sessionNameStr}</div>
+    ${polarRow}
     <div class="mini-kpis">
       <span><b>${fmtSec(total)}</b> 総時間</span>
       <span><b>${distanceStr}</b> 距離</span>
-      <span><b>${session.data.length}</b> ストローク</span>
+      <span><b>${data.length}</b> ストローク</span>
     </div>
     <div class="chart-mini"><canvas></canvas></div>
     <div class="card-actions">
@@ -939,6 +1024,15 @@ function buildCard(session, metric, zones) {
   card.querySelector('[data-act="download"]').addEventListener("click", () => {
     downloadSummaryCsv([{ crew: crewNameFor(session), summary }], session.filename);
   });
+  // Polar ドロップダウンの変更 → ペアリング更新 → 再描画。
+  const pairSelect = card.querySelector('[data-act="pair"]');
+  if (pairSelect) {
+    pairSelect.addEventListener("change", (e) => {
+      const v = e.target.value;
+      session.polarId = v ? Number(v) : null;
+      renderSessionCards();
+    });
+  }
 
   return card;
 }
@@ -1024,6 +1118,20 @@ function handleOneFile(file) {
     reader.onload = (e) => {
       try {
         const text = e.target.result;
+        const kind = detectCsvKind(text);
+        if (kind === "polar") {
+          const { metadata, samples } = parsePolarCsv(text);
+          if (!samples.length) {
+            resolve({ ok: false, filename: file.name, reason: "Polar CSV にサンプルがありませんでした" });
+            return;
+          }
+          resolve({
+            ok: true, kind: "polar",
+            polar: { id: nextPolarId++, filename: file.name, metadata, samples },
+          });
+          return;
+        }
+        // NK
         const { metadata, rows } = parseNkCsv(text);
         if (!rows || !rows.length) {
           resolve({ ok: false, filename: file.name, reason: "データ行が見つかりませんでした" });
@@ -1034,7 +1142,10 @@ function handleOneFile(file) {
           resolve({ ok: false, filename: file.name, reason: "解釈できるストロークがありませんでした" });
           return;
         }
-        resolve({ ok: true, session: { id: nextSessionId++, filename: file.name, metadata, data } });
+        resolve({
+          ok: true, kind: "nk",
+          session: { id: nextSessionId++, filename: file.name, metadata, data, polarId: null },
+        });
       } catch (err) {
         console.error(err);
         resolve({ ok: false, filename: file.name, reason: err.message });
@@ -1045,16 +1156,43 @@ function handleOneFile(file) {
   });
 }
 
+function autoPairNewPolars() {
+  // 新しく追加された Polar を、まだ紐付いていない NK セッションに自動で割り当てる。
+  // 基準はセッション日付 (Date) + startTime が最も近いもの。どちらも情報が無い
+  // NK セッションには、残っている Polar を先着順で適用する。
+  for (const s of sessions) {
+    if (s.polarId) continue;
+    if (!polarSessions.length) break;
+    // 日付一致を優先。
+    let best = null;
+    let bestDistance = Infinity;
+    for (const p of polarSessions) {
+      let score = 0;
+      if (s.metadata.date && p.metadata.date && s.metadata.date === p.metadata.date) score -= 10000;
+      if (s.metadata.startTime && p.metadata.startTime) {
+        const ds = wallClockSeconds(s.metadata.startTime);
+        const dp = wallClockSeconds(p.metadata.startTime);
+        if (ds != null && dp != null) score += Math.abs(ds - dp);
+      }
+      if (score < bestDistance) { bestDistance = score; best = p; }
+    }
+    if (best) s.polarId = best.id;
+  }
+}
+
 async function handleFiles(fileList) {
   if (!fileList || !fileList.length) return;
   const files = Array.from(fileList);
   const results = await Promise.all(files.map(handleOneFile));
 
   const failures = [];
+  let addedAny = false;
   for (const r of results) {
-    if (r.ok) sessions.push(r.session);
-    else failures.push(`${r.filename}: ${r.reason}`);
+    if (!r.ok) { failures.push(`${r.filename}: ${r.reason}`); continue; }
+    if (r.kind === "polar") { polarSessions.push(r.polar); addedAny = true; }
+    else                    { sessions.push(r.session);     addedAny = true; }
   }
+  if (addedAny) autoPairNewPolars();
   if (failures.length) {
     showError("以下のファイルは読み込めませんでした:\n" + failures.join("\n"));
   } else {
@@ -1122,17 +1260,20 @@ $("download-all-csv").addEventListener("click", () => {
   const zones = readZonesFromUI();
   const items = [];
   for (const s of sessions) {
-    if (!s.data.some((r) => !isNaN(r[metric]))) continue;
-    const { summary } = analyze(s.data, metric, zones);
+    const data = sessionEffectiveData(s);
+    if (!data.some((r) => !isNaN(r[metric]))) continue;
+    const { summary } = analyze(data, metric, zones);
     items.push({ crew: crewNameFor(s), summary });
   }
   downloadSummaryCsv(items, `all_crews_${metric}`);
 });
 
 $("clear-all").addEventListener("click", () => {
-  if (!sessions.length) return;
-  if (!confirm(`読み込み済みの ${sessions.length} 件を全てクリアしますか? クルー名の設定は残ります。`)) return;
+  const total = sessions.length + polarSessions.length;
+  if (!total) return;
+  if (!confirm(`読み込み済みの ${sessions.length} 件の NK セッションと ${polarSessions.length} 件の Polar を全てクリアしますか? クルー名の設定は残ります。`)) return;
   sessions = [];
+  polarSessions = [];
   detailOpen.clear();
   renderAll();
 });
