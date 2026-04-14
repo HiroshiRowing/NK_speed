@@ -1361,6 +1361,15 @@ function handleOneFile(file) {
           resolve({ ok: false, filename: file.name, reason: "データ行が見つかりませんでした" });
           return;
         }
+        // プリアンブルにシリアル番号が無い機種があるので、ファイル名から拾えたらそれを使う。
+        // NK SpeedCoach のエクスポート名は "SpdCoach <serial> <YYYYMMDD> <時刻>.csv" が典型。
+        // 8 桁の日付と混同しないよう、機器プレフィックスの直後にある 5〜7 桁を優先して拾う。
+        if (!metadata.serial) {
+          const m1 = file.name.match(/(?:SpdCoach|SpeedCoach|NK)[\s_-]*(\d{5,8})\b/i);
+          const m2 = m1 ? null : file.name.match(/(?:^|[^\d])(\d{6,8})(?![\d])/);
+          const picked = m1 ? m1[1] : (m2 ? m2[1] : null);
+          if (picked) metadata.serial = picked;
+        }
         const data = prepare(rows);
         if (!data.length) {
           resolve({ ok: false, filename: file.name, reason: "解釈できるストロークがありませんでした" });
