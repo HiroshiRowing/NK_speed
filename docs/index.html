@@ -1435,16 +1435,18 @@ function buildCard(session, metric, globalZones) {
   const intervals = detectIntervals(data);
   const intervalsBlock = card.querySelector(".intervals-block");
   if (intervals.length >= 2) {
+    // summary は zone 昇順 (Z1 → Z3 他) になっているのでそこから zoneNames を取り出す。
+    const intervalZoneNames = summary.map((r) => r.zone);
     const rows = intervals.map((iv, idx) => {
       const s = summarizeInterval(data, iv.start, iv.end);
       // 各 rep 内のゾーン分布 (主要ゾーンだけ表示)。
       const repRows = annotated.slice(iv.start, iv.end + 1);
       const zoneTimes = {};
-      for (const zn of zoneNames) zoneTimes[zn] = 0;
+      for (const zn of intervalZoneNames) zoneTimes[zn] = 0;
       for (const r of repRows) {
         if (zoneTimes[r.zone] !== undefined) zoneTimes[r.zone] += r.dt_s || 0;
       }
-      const topZone = zoneNames
+      const topZone = intervalZoneNames
         .map((zn) => [zn, zoneTimes[zn]])
         .filter((e) => e[1] > 0)
         .sort((a, b) => b[1] - a[1])[0];
