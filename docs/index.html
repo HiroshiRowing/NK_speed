@@ -140,6 +140,69 @@
     margin-right: 6px;
     vertical-align: middle;
   }
+  /* セッションカード: クルーごと */
+  #sessions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+  }
+  .session-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .session-card .crew {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .session-card .meta {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .session-card .mini-kpis {
+    display: flex;
+    gap: 10px;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .session-card .mini-kpis b { color: var(--text); }
+  .session-card .card-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    font-size: 0.85rem;
+  }
+  .session-card .card-actions button { padding: 4px 10px; font-size: 0.8rem; }
+  .session-card .detail { margin-top: 12px; }
+  .session-card .detail.hidden { display: none; }
+  .session-card .chart-mini { height: 200px; position: relative; }
+  .session-card .chart-timeline { height: 220px; position: relative; margin-top: 10px; }
+  .session-card summary-table { font-size: 0.85rem; }
+  /* クルー名エディタ */
+  #crew-editor { margin-top: 16px; }
+  #crew-editor table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  #crew-editor th {
+    text-align: left; font-weight: 500; color: var(--muted);
+    padding: 6px 8px; border-bottom: 1px solid var(--border);
+  }
+  #crew-editor td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  #crew-editor input[type=text] { width: 100%; padding: 4px 8px; }
+  #crew-editor .count { color: var(--muted); font-size: 0.8rem; }
+  #top-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  #top-toolbar .count { color: var(--muted); font-size: 0.9rem; }
   .kpis { display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
   .kpi {
     flex: 1 1 140px;
@@ -211,39 +274,37 @@
   <!-- 右カラム: ドロップと結果 -->
   <section>
     <div id="drop-zone">
-      <div class="big">CSV をここにドロップ</div>
-      <div class="muted">クリックしてファイルを選択することもできます</div>
-      <input type="file" id="file-input" accept=".csv">
+      <div class="big">CSV をここにドロップ (複数ファイル OK)</div>
+      <div class="muted">艇/クルーごとに違うシリアル番号で自動的にまとまります。クリックでも選択できます。</div>
+      <input type="file" id="file-input" accept=".csv" multiple>
     </div>
 
     <div id="error" class="error hidden" style="margin-top: 16px;"></div>
 
-    <div id="results" class="hidden" style="margin-top: 16px;">
-      <div class="kpis">
-        <div class="kpi"><div class="label">総セッション時間</div><div class="value" id="kpi-total">–</div></div>
-        <div class="kpi"><div class="label">指標</div><div class="value" id="kpi-metric">–</div></div>
-        <div class="kpi"><div class="label">ファイル</div><div class="value" id="kpi-file" style="font-size: 0.95rem;">–</div></div>
-      </div>
-
-      <div class="panel" style="margin-bottom: 16px;">
-        <h2>ゾーン別滞在時間</h2>
-        <div class="chart-wrap"><canvas id="bar-chart"></canvas></div>
-        <table id="summary-table">
-          <thead>
-            <tr><th>ゾーン</th><th>時間</th><th>分</th><th>%</th></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-        <div style="margin-top: 12px;">
-          <button id="download-csv" type="button">📥 サマリ CSV をダウンロード</button>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h2>タイムライン (ゾーンで色分け)</h2>
-        <div id="timeline-wrap"><canvas id="timeline-chart"></canvas></div>
+    <div id="top-toolbar" class="hidden">
+      <div class="count" id="session-count">0 件のセッションを読み込み中</div>
+      <div>
+        <button id="download-all-csv" type="button">📥 全クルーのサマリを CSV で</button>
+        <button id="clear-all" class="ghost" type="button" style="margin-left: 6px;">すべてクリア</button>
       </div>
     </div>
+
+    <!-- クルー名エディタ: シリアル番号 → クルー名のマッピング。ブラウザに保存される。 -->
+    <div id="crew-editor" class="panel hidden">
+      <h2>クルー名の設定</h2>
+      <p style="font-size: 0.82rem; color: var(--muted); margin: 0 0 10px;">
+        シリアル番号ごとに好きな名前を付けられます。入力はブラウザに保存され、次に同じ番号の CSV をアップしたときも自動で適用されます。
+      </p>
+      <table>
+        <thead>
+          <tr><th style="width: 38%;">シリアル番号</th><th>クルー名</th><th style="width: 80px;">セッション</th></tr>
+        </thead>
+        <tbody id="crew-editor-body"></tbody>
+      </table>
+    </div>
+
+    <!-- セッションカード: クルーごとに 1 枚 -->
+    <div id="sessions-grid"></div>
   </section>
 </main>
 
@@ -307,14 +368,44 @@ const dropZone = $("drop-zone");
 const fileInput = $("file-input");
 const metricSelect = $("metric");
 const zonesBody = $("zones-body");
-const resultsDiv = $("results");
 const errorDiv = $("error");
+const topToolbar = $("top-toolbar");
+const sessionCountEl = $("session-count");
+const crewEditor = $("crew-editor");
+const crewEditorBody = $("crew-editor-body");
+const sessionsGrid = $("sessions-grid");
 
-// 状態: 直近にパースしたデータ
-let lastData = null;
-let lastFileName = null;
-let barChart = null;
-let timelineChart = null;
+// --- 状態 -----------------------------------------------------------
+// アップロード済みのセッション。各要素は
+//   { id, filename, metadata: {serial, sessionName, totalDistance, totalTimeStr}, data }
+let sessions = [];
+let nextSessionId = 1;
+
+// セッションごとに生成した Chart.js インスタンス (メトリック変更時に destroy するため)。
+const chartRegistry = new Map();
+
+// カードの詳細表示状態 (セッション ID → bool)。
+const detailOpen = new Map();
+
+// シリアル番号 → ユーザ指定のクルー名。ブラウザに保存して次回も引き継ぐ。
+const CREW_NAMES_KEY = "nk_crew_names_v1";
+let crewNames = (() => {
+  try {
+    const raw = localStorage.getItem(CREW_NAMES_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+})();
+function saveCrewNames() {
+  try { localStorage.setItem(CREW_NAMES_KEY, JSON.stringify(crewNames)); } catch {}
+}
+function crewKeyFor(session) {
+  // シリアルがあればそれを使う。無ければファイル名を artefact キーにする。
+  return session.metadata.serial || `file:${session.filename}`;
+}
+function crewNameFor(session) {
+  const key = crewKeyFor(session);
+  return crewNames[key] || (session.metadata.serial ? `SN ${session.metadata.serial}` : session.filename);
+}
 
 // =========================================================================
 // CSV 読み込み・前処理
@@ -352,8 +443,40 @@ function findColumn(columns, ...keywords) {
   });
 }
 
+function extractMetadata(text, headerIdx) {
+  // ヘッダ行より前(プリアンブル)から「Key,Value」形式のメタデータを抽出する。
+  // NK SpeedCoach のプリアンブル例:
+  //   Serial Number,NK-123456
+  //   Session Name,Morning steady-state
+  //   Total Distance (GPS),4735
+  //   Total Elapsed Time,00:20:26.86
+  const lines = text.split(/\r?\n/).slice(0, headerIdx >= 0 ? headerIdx : 30);
+  const meta = { serial: null, sessionName: null, totalDistance: null, totalTimeStr: null };
+  for (const line of lines) {
+    // カンマで分割して 2 列以上あるもののみ対象。
+    const cells = line.split(",");
+    if (cells.length < 2) continue;
+    const key = cells[0].trim().toLowerCase();
+    const value = cells.slice(1).join(",").trim();
+    if (!key || !value) continue;
+    // シリアル番号: "Serial Number" / "Serial" / "Device Serial" 等の派生を吸収。
+    if (meta.serial == null && key.includes("serial")) {
+      meta.serial = value;
+    } else if (meta.sessionName == null && key.includes("session") && key.includes("name")) {
+      meta.sessionName = value;
+    } else if (meta.totalDistance == null && key.includes("total") && key.includes("distance")) {
+      const n = parseFloat(value);
+      if (!isNaN(n)) meta.totalDistance = n;
+    } else if (meta.totalTimeStr == null && key.includes("total") && key.includes("elapsed")) {
+      meta.totalTimeStr = value;
+    }
+  }
+  return meta;
+}
+
 function parseNkCsv(text) {
   const headerIdx = findHeaderRow(text);
+  const metadata = extractMetadata(text, headerIdx);
   const csvPart = headerIdx >= 0
     ? text.split(/\r?\n/).slice(headerIdx).join("\n")
     : text;
@@ -365,7 +488,7 @@ function parseNkCsv(text) {
     // パース中の警告はログだけ残す (致命的エラーだけ後で判定)。
     console.warn("CSV parse warnings:", parsed.errors.slice(0, 3));
   }
-  return parsed.data;
+  return { metadata, rows: parsed.data };
 }
 
 function prepare(rows) {
@@ -489,25 +612,10 @@ function zoneColors(zoneNames) {
   return map;
 }
 
-function renderSummaryTable(summary, colors) {
-  const tbody = document.querySelector("#summary-table tbody");
-  tbody.innerHTML = "";
-  for (const r of summary) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td><span class="swatch" style="background:${colors[r.zone]}"></span>${r.zone}</td>
-      <td>${fmtSec(r.time_s)}</td>
-      <td>${r.time_min.toFixed(2)}</td>
-      <td>${r.pct.toFixed(1)}%</td>
-    `;
-    tbody.appendChild(tr);
-  }
-}
-
-function renderBar(summary, metric, colors) {
-  const ctx = $("bar-chart").getContext("2d");
-  if (barChart) barChart.destroy();
-  barChart = new Chart(ctx, {
+function renderBarInto(canvas, summary, metric, colors) {
+  const key = canvas.id;
+  if (chartRegistry.has(key)) chartRegistry.get(key).destroy();
+  const chart = new Chart(canvas.getContext("2d"), {
     type: "bar",
     data: {
       labels: summary.map((r) => r.zone),
@@ -531,17 +639,15 @@ function renderBar(summary, metric, colors) {
           },
         },
       },
-      scales: {
-        x: { title: { display: true, text: "Minutes" } },
-      },
+      scales: { x: { title: { display: true, text: "Minutes" } } },
     },
   });
+  chartRegistry.set(key, chart);
 }
 
-function renderTimeline(annotated, metric, zones, colors) {
-  const ctx = $("timeline-chart").getContext("2d");
-  if (timelineChart) timelineChart.destroy();
-  // ゾーン別に散布点をまとめる (legend に使える)。
+function renderTimelineInto(canvas, annotated, metric, zones, colors) {
+  const key = canvas.id;
+  if (chartRegistry.has(key)) chartRegistry.get(key).destroy();
   const datasets = [];
   const zoneNames = zones.map((z) => z.name).concat(
     annotated.some((r) => r.zone === "Unknown") ? ["Unknown"] : []
@@ -563,25 +669,23 @@ function renderTimeline(annotated, metric, zones, colors) {
       showLine: false,
     });
   }
-  timelineChart = new Chart(ctx, {
+  const chart = new Chart(canvas.getContext("2d"), {
     type: "scatter",
     data: { datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: {
-        legend: { position: "bottom" },
-      },
+      plugins: { legend: { position: "bottom" } },
       scales: {
         x: { title: { display: true, text: "Elapsed (min)" } },
         y: {
           title: { display: true, text: metric },
-          // スプリットは小さいほど速いので軸を反転すると直感的。
           reverse: metric === "split_s",
         },
       },
     },
   });
+  chartRegistry.set(key, chart);
 }
 
 function showError(msg) {
@@ -595,38 +699,181 @@ function hideError() {
   errorDiv.textContent = "";
 }
 
-function rerun() {
-  if (!lastData) return;
-  hideError();
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+function renderCrewEditor() {
+  // シリアル番号別にセッションをグループ化 → 編集用の表を作る。
+  const groups = new Map();
+  for (const s of sessions) {
+    const key = crewKeyFor(s);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  }
+  crewEditorBody.innerHTML = "";
+  if (groups.size === 0) {
+    crewEditor.classList.add("hidden");
+    return;
+  }
+  crewEditor.classList.remove("hidden");
+  for (const [key, list] of groups.entries()) {
+    const serial = list[0].metadata.serial;
+    const displayKey = serial ? `SN ${serial}` : `(file: ${list[0].filename})`;
+    const currentName = crewNames[key] || "";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${escapeHtml(displayKey)}</td>
+      <td><input type="text" value="${escapeHtml(currentName)}" placeholder="${escapeHtml(serial ? `SN ${serial}` : list[0].filename)}"></td>
+      <td class="count">${list.length} 件</td>
+    `;
+    const input = tr.querySelector("input");
+    input.addEventListener("input", () => {
+      const name = input.value.trim();
+      if (name) crewNames[key] = name;
+      else delete crewNames[key];
+      saveCrewNames();
+      renderSessionCards();
+    });
+    crewEditorBody.appendChild(tr);
+  }
+}
+
+function renderSessionCards() {
+  // 既存のカードを全部作り直す。カード数は通常少ないので DOM を素朴に作り直す。
+  // チャートは chartRegistry で管理されるため、destroy される。
+  for (const chart of chartRegistry.values()) chart.destroy();
+  chartRegistry.clear();
+  sessionsGrid.innerHTML = "";
+
+  if (sessions.length === 0) {
+    topToolbar.classList.add("hidden");
+    return;
+  }
+
   const metric = metricSelect.value;
   const zones = readZonesFromUI();
-  if (!zones.length) {
-    showError("ゾーンが 1 つもありません。少なくとも 1 行追加してください。");
-    return;
+  topToolbar.classList.remove("hidden");
+  sessionCountEl.textContent = `${sessions.length} 件のセッション · 指標: ${METRIC_LABELS[metric]}`;
+
+  // クルー名順 → 読み込み順でソート (同じクルーはまとめて表示)。
+  const sorted = [...sessions].sort((a, b) => {
+    const an = crewNameFor(a);
+    const bn = crewNameFor(b);
+    if (an !== bn) return an.localeCompare(bn, "ja");
+    return a.id - b.id;
+  });
+
+  for (const s of sorted) {
+    sessionsGrid.appendChild(buildCard(s, metric, zones));
   }
-  // 指標の列が空 (全て NaN) なら弾く。
-  const hasValue = lastData.some((r) => !isNaN(r[metric]));
-  if (!hasValue) {
-    showError(`この CSV には「${METRIC_LABELS[metric]}」に対応するデータがありませんでした。別の指標を選んでください。`);
-    return;
-  }
-
-  const { annotated, summary, total } = analyze(lastData, metric, zones);
-  const zoneNames = summary.map((r) => r.zone);
-  const colors = zoneColors(zoneNames);
-
-  $("kpi-total").textContent = fmtSec(total);
-  $("kpi-metric").textContent = METRIC_LABELS[metric];
-  $("kpi-file").textContent = lastFileName || "–";
-
-  renderSummaryTable(summary, colors);
-  renderBar(summary, metric, colors);
-  renderTimeline(annotated, metric, zones, colors);
-
-  resultsDiv.classList.remove("hidden");
-  // ダウンロード用に最新のサマリを保持。
-  resultsDiv.dataset.summary = JSON.stringify(summary);
 }
+
+function buildCard(session, metric, zones) {
+  const card = document.createElement("div");
+  card.className = "session-card";
+
+  const hasValue = session.data.some((r) => !isNaN(r[metric]));
+  if (!hasValue) {
+    card.innerHTML = `
+      <div class="crew">${escapeHtml(crewNameFor(session))}</div>
+      <div class="meta">${escapeHtml(session.filename)}</div>
+      <div class="error" style="margin-top: 8px;">
+        この CSV には「${METRIC_LABELS[metric]}」のデータがありません。サイドバーで別の指標を選んでください。
+      </div>
+      <div class="card-actions">
+        <button class="ghost" data-act="remove">× 削除</button>
+      </div>
+    `;
+    card.querySelector('[data-act="remove"]').addEventListener("click", () => removeSession(session.id));
+    return card;
+  }
+
+  const { annotated, summary, total } = analyze(session.data, metric, zones);
+  const colors = zoneColors(summary.map((r) => r.zone));
+
+  const distanceStr = session.metadata.totalDistance != null
+    ? `${session.metadata.totalDistance.toLocaleString()} m` : "–";
+  const sessionNameStr = session.metadata.sessionName
+    ? ` · ${escapeHtml(session.metadata.sessionName)}` : "";
+  const serialStr = session.metadata.serial
+    ? `SN ${escapeHtml(session.metadata.serial)}` : "(シリアル未検出)";
+
+  card.innerHTML = `
+    <div class="crew">${escapeHtml(crewNameFor(session))}</div>
+    <div class="meta">${serialStr} · ${escapeHtml(session.filename)}${sessionNameStr}</div>
+    <div class="mini-kpis">
+      <span><b>${fmtSec(total)}</b> 総時間</span>
+      <span><b>${distanceStr}</b> 距離</span>
+      <span><b>${session.data.length}</b> ストローク</span>
+    </div>
+    <div class="chart-mini"><canvas></canvas></div>
+    <div class="card-actions">
+      <button data-act="toggle">${detailOpen.get(session.id) ? "詳細を閉じる" : "詳細を開く"}</button>
+      <button class="ghost" data-act="download">📥 CSV</button>
+      <button class="ghost" data-act="remove" style="margin-left: auto;">× 削除</button>
+    </div>
+    <div class="detail ${detailOpen.get(session.id) ? "" : "hidden"}">
+      <table id="summary-table"><thead><tr><th>ゾーン</th><th>時間</th><th>分</th><th>%</th></tr></thead><tbody></tbody></table>
+      <div class="chart-timeline"><canvas></canvas></div>
+    </div>
+  `;
+
+  const barCanvas = card.querySelector(".chart-mini canvas");
+  barCanvas.id = `bar-${session.id}`;
+  renderBarInto(barCanvas, summary, metric, colors);
+
+  // 詳細: 表 + タイムライン。
+  const tbody = card.querySelector("table#summary-table tbody");
+  for (const r of summary) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><span class="swatch" style="background:${colors[r.zone]}"></span>${escapeHtml(r.zone)}</td>
+      <td>${fmtSec(r.time_s)}</td>
+      <td>${r.time_min.toFixed(2)}</td>
+      <td>${r.pct.toFixed(1)}%</td>
+    `;
+    tbody.appendChild(tr);
+  }
+  const timelineCanvas = card.querySelector(".chart-timeline canvas");
+  timelineCanvas.id = `timeline-${session.id}`;
+  if (detailOpen.get(session.id)) {
+    renderTimelineInto(timelineCanvas, annotated, metric, zones, colors);
+  }
+
+  // 各セッションのサマリをカードに保持 (CSV ダウンロード用)。
+  card.dataset.summary = JSON.stringify(summary);
+  card.dataset.crew = crewNameFor(session);
+
+  card.querySelector('[data-act="toggle"]').addEventListener("click", () => {
+    const isOpen = detailOpen.get(session.id) || false;
+    detailOpen.set(session.id, !isOpen);
+    renderSessionCards();
+  });
+  card.querySelector('[data-act="remove"]').addEventListener("click", () => removeSession(session.id));
+  card.querySelector('[data-act="download"]').addEventListener("click", () => {
+    downloadSummaryCsv([{ crew: crewNameFor(session), summary }], session.filename);
+  });
+
+  return card;
+}
+
+function removeSession(id) {
+  sessions = sessions.filter((s) => s.id !== id);
+  detailOpen.delete(id);
+  renderAll();
+}
+
+function renderAll() {
+  hideError();
+  renderCrewEditor();
+  renderSessionCards();
+}
+
+// 設定変更 (指標 / ゾーン) 時に再描画するための旧 rerun 互換関数。
+function rerun() { renderAll(); }
 
 // =========================================================================
 // ゾーンエディタ UI
@@ -686,38 +933,59 @@ metricSelect.addEventListener("change", () => {
 loadPreset("spm");
 
 // =========================================================================
-// ファイル取り込み (ドロップ / クリック選択)
+// ファイル取り込み (ドロップ / クリック選択、複数ファイル対応)
 // =========================================================================
-function handleFile(file) {
-  if (!file) return;
-  lastFileName = file.name;
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    try {
-      const text = e.target.result;
-      const rows = parseNkCsv(text);
-      if (!rows.length) {
-        showError("CSV にデータ行が見つかりませんでした。NK SpeedCoach のエクスポート CSV か確認してください。");
-        lastData = null;
-        return;
+function handleOneFile(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target.result;
+        const { metadata, rows } = parseNkCsv(text);
+        if (!rows || !rows.length) {
+          resolve({ ok: false, filename: file.name, reason: "データ行が見つかりませんでした" });
+          return;
+        }
+        const data = prepare(rows);
+        if (!data.length) {
+          resolve({ ok: false, filename: file.name, reason: "解釈できるストロークがありませんでした" });
+          return;
+        }
+        resolve({ ok: true, session: { id: nextSessionId++, filename: file.name, metadata, data } });
+      } catch (err) {
+        console.error(err);
+        resolve({ ok: false, filename: file.name, reason: err.message });
       }
-      lastData = prepare(rows);
-      if (!lastData.length) {
-        showError("CSV から解釈できるストロークデータがありませんでした。");
-        return;
-      }
-      rerun();
-    } catch (err) {
-      console.error(err);
-      showError("読み込み中にエラー: " + err.message);
-    }
-  };
-  reader.onerror = () => showError("ファイルの読み込みに失敗しました。");
-  reader.readAsText(file);
+    };
+    reader.onerror = () => resolve({ ok: false, filename: file.name, reason: "ファイル読み込み失敗" });
+    reader.readAsText(file);
+  });
+}
+
+async function handleFiles(fileList) {
+  if (!fileList || !fileList.length) return;
+  const files = Array.from(fileList);
+  const results = await Promise.all(files.map(handleOneFile));
+
+  const failures = [];
+  for (const r of results) {
+    if (r.ok) sessions.push(r.session);
+    else failures.push(`${r.filename}: ${r.reason}`);
+  }
+  if (failures.length) {
+    showError("以下のファイルは読み込めませんでした:\n" + failures.join("\n"));
+  } else {
+    hideError();
+  }
+  renderAll();
 }
 
 dropZone.addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", (e) => handleFile(e.target.files[0]));
+fileInput.addEventListener("change", (e) => {
+  handleFiles(e.target.files);
+  // 同じファイルを再選択できるよう input をリセット。
+  e.target.value = "";
+});
 
 // ページ全体でドロップできるようにしつつ、視覚的なハイライトは drop-zone に。
 ["dragenter", "dragover"].forEach((ev) => {
@@ -733,35 +1001,57 @@ fileInput.addEventListener("change", (e) => handleFile(e.target.files[0]));
   });
 });
 document.addEventListener("drop", (e) => {
-  const file = e.dataTransfer && e.dataTransfer.files[0];
-  if (file) handleFile(file);
+  const files = e.dataTransfer && e.dataTransfer.files;
+  if (files && files.length) handleFiles(files);
 });
 
 // =========================================================================
-// サマリ CSV ダウンロード
+// サマリ CSV ダウンロード (1 枚のカード or 全クルー分)
 // =========================================================================
-$("download-csv").addEventListener("click", () => {
-  const raw = resultsDiv.dataset.summary;
-  if (!raw) return;
-  const summary = JSON.parse(raw);
-  const header = ["zone", "time_s", "time_min", "pct"];
+function downloadSummaryCsv(items, nameHint) {
+  // items: [{ crew, summary: [{zone, time_s, time_min, pct}, ...] }, ...]
+  const header = ["crew", "zone", "time_s", "time_min", "pct"];
   const lines = [header.join(",")];
-  for (const r of summary) {
-    lines.push([
-      `"${r.zone.replace(/"/g, '""')}"`,
-      r.time_s.toFixed(2),
-      r.time_min.toFixed(4),
-      r.pct.toFixed(2),
-    ].join(","));
+  for (const item of items) {
+    for (const r of item.summary) {
+      lines.push([
+        `"${String(item.crew).replace(/"/g, '""')}"`,
+        `"${String(r.zone).replace(/"/g, '""')}"`,
+        r.time_s.toFixed(2),
+        r.time_min.toFixed(4),
+        r.pct.toFixed(2),
+      ].join(","));
+    }
   }
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  const base = (lastFileName || "session").replace(/\.csv$/i, "");
+  const base = (nameHint || "sessions").replace(/\.csv$/i, "");
   a.download = `${base}_time_in_zones.csv`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+$("download-all-csv").addEventListener("click", () => {
+  if (!sessions.length) return;
+  const metric = metricSelect.value;
+  const zones = readZonesFromUI();
+  const items = [];
+  for (const s of sessions) {
+    if (!s.data.some((r) => !isNaN(r[metric]))) continue;
+    const { summary } = analyze(s.data, metric, zones);
+    items.push({ crew: crewNameFor(s), summary });
+  }
+  downloadSummaryCsv(items, `all_crews_${metric}`);
+});
+
+$("clear-all").addEventListener("click", () => {
+  if (!sessions.length) return;
+  if (!confirm(`読み込み済みの ${sessions.length} 件を全てクリアしますか? クルー名の設定は残ります。`)) return;
+  sessions = [];
+  detailOpen.clear();
+  renderAll();
 });
 </script>
 

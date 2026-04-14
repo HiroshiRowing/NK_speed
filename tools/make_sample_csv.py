@@ -24,7 +24,12 @@ def _fmt_split(seconds: float) -> str:
     return f"{m}:{s:04.1f}"
 
 
-def generate(out_path: Path, seed: int = 42) -> None:
+def generate(
+    out_path: Path,
+    seed: int = 42,
+    serial: str = "NK-123456",
+    session_name: str = "Morning steady-state",
+) -> None:
     rng = random.Random(seed)
 
     # セッション構成: (区間名, SPM 中心値, 区間ストローク数, 想定スプリット秒, 想定HR)
@@ -69,9 +74,12 @@ def generate(out_path: Path, seed: int = 42) -> None:
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", newline="", encoding="utf-8") as f:
-        # NK LiNK 風のメタデータヘッダ。
+        # NK LiNK 風のメタデータヘッダ。Serial Number はデバイスごとに一意で、
+        # 艇/クルーの識別に使える。
         f.write("NK SpeedCoach Rowing Session\n")
         f.write("Session Summary:\n")
+        f.write(f"Serial Number,{serial}\n")
+        f.write(f"Session Name,{session_name}\n")
         f.write(f"Total Distance (GPS),{distance:.0f}\n")
         f.write(f"Total Elapsed Time,{_fmt_time(elapsed)}\n")
         f.write(f"Total Strokes,{total_strokes}\n")
@@ -85,5 +93,12 @@ def generate(out_path: Path, seed: int = 42) -> None:
 
 if __name__ == "__main__":
     here = Path(__file__).resolve().parent.parent
-    generate(here / "sample_data" / "sample_session.csv")
-    print("wrote sample_data/sample_session.csv")
+    # 複数艇のデモができるよう、シリアル違いで 3 艇分を生成する。
+    sample_dir = here / "sample_data"
+    generate(sample_dir / "sample_session.csv",
+             seed=42, serial="NK-123456", session_name="Morning steady-state")
+    generate(sample_dir / "sample_session_port.csv",
+             seed=7,  serial="NK-777888", session_name="Port 8+ morning row")
+    generate(sample_dir / "sample_session_stbd.csv",
+             seed=21, serial="NK-999111", session_name="Starboard 8+ morning row")
+    print("wrote 3 sample CSVs under sample_data/")
