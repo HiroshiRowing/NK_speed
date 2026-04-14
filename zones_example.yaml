@@ -1,0 +1,21 @@
+# ゾーン設定のサンプル。`python analyze.py session.csv --zones zones_example.yaml` で使える。
+#
+# metric: ゾーン分けに使う指標。 spm / hr / split_s / power のいずれか。
+#   - spm      : ストロークレート(本/分)
+#   - hr       : 心拍(bpm)
+#   - split_s  : 500m スプリット(秒)。値が小さいほど速い。
+#   - power    : パワー(W)。Empower オールロック搭載艇のみ。
+#
+# zones: 各ゾーンを name/min/max で定義。
+#   - min は下限(含む)、max は上限(含まない)。
+#   - 先頭の min を省略すると -inf、末尾の max を省略すると +inf。
+#   - 並び順は結果のグラフ順になる。
+
+metric: spm
+zones:
+  - { name: "R",   max: 16 }
+  - { name: "UT2", min: 16, max: 22 }
+  - { name: "UT1", min: 22, max: 26 }
+  - { name: "AT",  min: 26, max: 30 }
+  - { name: "TR",  min: 30, max: 34 }
+  - { name: "AN",  min: 34 }

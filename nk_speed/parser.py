@@ -1,0 +1,133 @@
+"""NK SpeedCoach の CSV をロードして扱いやすい DataFrame に整える。
+
+NK SpeedCoach (GPS / GPS2 / LiNK エクスポート) の CSV は先頭にセッション概要の
+メタデータ行が並び、途中の "Per-Stroke Data:" もしくは "Interval,Distance,..."
+の行からストローク毎のデータが始まる。機種・ファームによって列名が微妙に
+異なるので、ヘッダ行をキーワードで自動検出する。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Union
+
+import numpy as np
+import pandas as pd
+
+
+PathLike = Union[str, Path]
+
+
+def _find_header_row(lines: list[str]) -> int | None:
+    """ストローク毎データのヘッダ行インデックスを探す。見つからなければ None。"""
+    for i, line in enumerate(lines):
+        low = line.lower()
+        # "Interval" と "Elapsed Time" が同じ行にあるのが共通パターン。
+        if "interval" in low and "elapsed time" in low:
+            return i
+        # 新しい LiNK エクスポートでは "Stroke Rate" を含む行がヘッダ。
+        if "stroke rate" in low and ("elapsed" in low or "distance" in low):
+            return i
+    return None
+
+
+def read_nk_csv(path: PathLike) -> pd.DataFrame:
+    """NK SpeedCoach CSV を読み込み、ストローク毎データ部分だけを返す。"""
+    path = Path(path)
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        lines = f.readlines()
+
+    header_idx = _find_header_row(lines)
+    if header_idx is None:
+        # フォールバック: そのまま読む(単純 CSV の場合)。
+        df = pd.read_csv(path)
+    else:
+        df = pd.read_csv(path, skiprows=header_idx)
+
+    df.columns = [str(c).strip() for c in df.columns]
+    # 空行・完全欠損行を除去。
+    df = df.dropna(how="all").reset_index(drop=True)
+    return df
+
+
+def _parse_time_to_seconds(value) -> float:
+    """HH:MM:SS.s / MM:SS.s / 秒 (数値) を秒(float)に変換。"""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return np.nan
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip()
+    if not s or s.lower() in {"nan", "none", "-"}:
+        return np.nan
+    try:
+        parts = s.split(":")
+        seconds = 0.0
+        for p in parts:
+            seconds = seconds * 60 + float(p)
+        return seconds
+    except ValueError:
+        return np.nan
+
+
+def _match_column(columns: list[str], *keywords: str) -> str | None:
+    """`keywords` の全てを(大文字小文字無視で)含む列名を返す。"""
+    for col in columns:
+        low = col.lower()
+        if all(k.lower() in low for k in keywords):
+            return col
+    return None
+
+
+def prepare(df: pd.DataFrame) -> pd.DataFrame:
+    """解析に使いやすい標準列を持つ DataFrame を作る。
+
+    生成される列:
+      elapsed_s   : セッション開始からの経過秒
+      dt_s        : 直前サンプルからの経過秒(ゾーン別滞在時間の重みに使う)
+      split_s     : 500m スプリット(秒)
+      spm         : ストロークレート(本/分)
+      hr          : 心拍(bpm)
+      power       : パワー(W)
+      distance_m  : 累積距離(m)
+
+    元データに存在しない列は自動的に省略される。
+    """
+    cols = list(df.columns)
+    out = pd.DataFrame(index=df.index)
+
+    elapsed_col = _match_column(cols, "elapsed", "time")
+    if elapsed_col:
+        out["elapsed_s"] = df[elapsed_col].apply(_parse_time_to_seconds)
+
+    split_col = _match_column(cols, "split", "gps") or _match_column(cols, "split")
+    if split_col:
+        out["split_s"] = df[split_col].apply(_parse_time_to_seconds)
+
+    spm_col = _match_column(cols, "stroke", "rate")
+    if spm_col:
+        out["spm"] = pd.to_numeric(df[spm_col], errors="coerce")
+
+    hr_col = _match_column(cols, "heart", "rate")
+    if hr_col:
+        out["hr"] = pd.to_numeric(df[hr_col], errors="coerce")
+
+    power_col = _match_column(cols, "power")
+    if power_col:
+        out["power"] = pd.to_numeric(df[power_col], errors="coerce")
+
+    distance_col = _match_column(cols, "distance", "gps")
+    if distance_col and "stroke" not in distance_col.lower():
+        out["distance_m"] = pd.to_numeric(df[distance_col], errors="coerce")
+
+    # dt_s: 直前サンプルからの経過秒。最初の行は 0 とする。
+    # NK のログはストローク毎サンプリングなので、サンプル間隔 = そのストロークに
+    # 費やした時間 ≒ その強度での滞在時間として扱える。
+    if "elapsed_s" in out:
+        dt = out["elapsed_s"].diff()
+        dt.iloc[0] = 0 if len(dt) else 0
+        # 負値(リセット等)や極端に大きな間隔(ポーズ)は 0 扱いで除外。
+        dt = dt.where(dt >= 0, 0)
+        dt = dt.where(dt <= 30, 0)
+        out["dt_s"] = dt.fillna(0)
+
+    return out
