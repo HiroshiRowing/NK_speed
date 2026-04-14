@@ -10,5 +10,10 @@ nk_output/
 *.png
 !docs/**/*.png
 
+# Personal session data (CSV をここに置くとコミットされない)
+sessions/
+*.csv
+!sample_data/*.csv
+
 # OS
 .DS_Store
