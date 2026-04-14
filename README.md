@@ -14,7 +14,32 @@
 pip install -r requirements.txt
 ```
 
-## 使い方
+## 🖱️ ブラウザでドラッグ&ドロップ (おすすめ)
+
+```bash
+streamlit run app.py
+```
+
+ターミナルに
+
+```
+  Local URL:   http://localhost:8501
+  Network URL: http://192.168.x.x:8501
+```
+
+と表示されるので、ブラウザで開いてください。ページの真ん中にある
+ドロップエリアに CSV を放り込むだけで、ゾーン別滞在時間の表・横棒グラフ・
+タイムラインが自動で表示されます。
+
+- サイドバーで **指標 (SPM / HR / スプリット / パワー)** を切り替え可能
+- ゾーン境界もサイドバー上で直接編集可能 (YAML。変更は即反映)
+- サマリ CSV はボタンひとつでダウンロード
+- `Network URL` を同じ Wi-Fi の iPad / スマホから開けば、艇庫の
+  タブレットからそのまま解析できます
+
+停止するときはターミナルで `Ctrl+C`。
+
+## 💻 CLI から使う
 
 ### 1. デフォルト (ストロークレートでゾーン分け)
 
@@ -121,6 +146,7 @@ print(summary)
 
 ```
 .
+├── app.py                  # Web UI (streamlit run app.py)
 ├── analyze.py              # CLI エントリポイント
 ├── nk_speed/
 │   ├── parser.py           # CSV 読み込みと列標準化
@@ -133,3 +159,16 @@ print(summary)
 ├── zones_example.yaml      # ゾーン設定テンプレート
 └── requirements.txt
 ```
+
+## 🌐 インターネット上で共有したいとき
+
+ローカル起動だけでは LAN 内からしかアクセスできません。
+インターネットに公開したい場合は以下が手軽です。
+
+- **Streamlit Community Cloud** (無料, GitHub 連携): このリポジトリを
+  フォーク/プッシュし、[share.streamlit.io](https://share.streamlit.io)
+  でアプリを登録するだけで `https://<yourname>-nk-speed.streamlit.app`
+  のような URL が発行されます。
+- **Hugging Face Spaces** の Streamlit テンプレート
+- 選手データはセンシティブなので、公開 URL にする場合はアクセス制限
+  (Streamlit Cloud の Secrets 経由でパスワード保護など) を推奨します。
