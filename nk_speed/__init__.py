@@ -1,6 +1,6 @@
 """NK SpeedCoach のログを強度ゾーン別に集計するためのユーティリティ。"""
 
-from .parser import read_nk_csv, prepare
+from .parser import SessionMetadata, prepare, read_nk_csv
 from .zones import (
     DEFAULT_PRESETS,
     classify_zones,
@@ -10,6 +10,7 @@ from .zones import (
 from .plot import plot_time_in_zones, plot_timeline
 
 __all__ = [
+    "SessionMetadata",
     "read_nk_csv",
     "prepare",
     "DEFAULT_PRESETS",

@@ -140,6 +140,69 @@
     margin-right: 6px;
     vertical-align: middle;
   }
+  /* セッションカード: クルーごと */
+  #sessions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+  }
+  .session-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .session-card .crew {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .session-card .meta {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .session-card .mini-kpis {
+    display: flex;
+    gap: 10px;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .session-card .mini-kpis b { color: var(--text); }
+  .session-card .card-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    font-size: 0.85rem;
+  }
+  .session-card .card-actions button { padding: 4px 10px; font-size: 0.8rem; }
+  .session-card .detail { margin-top: 12px; }
+  .session-card .detail.hidden { display: none; }
+  .session-card .chart-mini { height: 200px; position: relative; }
+  .session-card .chart-timeline { height: 220px; position: relative; margin-top: 10px; }
+  .session-card summary-table { font-size: 0.85rem; }
+  /* クルー名エディタ */
+  #crew-editor { margin-top: 16px; }
+  #crew-editor table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  #crew-editor th {
+    text-align: left; font-weight: 500; color: var(--muted);
+    padding: 6px 8px; border-bottom: 1px solid var(--border);
+  }
+  #crew-editor td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  #crew-editor input[type=text] { width: 100%; padding: 4px 8px; }
+  #crew-editor .count { color: var(--muted); font-size: 0.8rem; }
+  #top-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 16px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  #top-toolbar .count { color: var(--muted); font-size: 0.9rem; }
   .kpis { display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
   .kpi {
     flex: 1 1 140px;
@@ -187,15 +250,14 @@
         <option value="hr">心拍 (HR, bpm)</option>
         <option value="split_s">500m スプリット (秒)</option>
         <option value="power">パワー (W)</option>
+        <option value="spm_hr">SPM × HR (複合) — 両方の条件を満たす時間</option>
       </select>
     </div>
 
     <div class="panel">
       <h2>ゾーン境界</h2>
       <table class="zones">
-        <thead>
-          <tr><th>名前</th><th>下限</th><th>上限</th><th></th></tr>
-        </thead>
+        <thead id="zones-thead"></thead>
         <tbody id="zones-body"></tbody>
       </table>
       <div class="zones-actions">
@@ -204,6 +266,7 @@
       </div>
       <p style="font-size: 0.78rem; color: var(--muted); margin: 10px 0 0;">
         下限は含む / 上限は含まない。空欄にすると「下限なし」「上限なし」になります。
+        <span id="zones-compound-note" class="hidden">複合モードでは <b>SPM と HR の両方</b> の条件を満たすストロークだけがそのゾーンに入ります。</span>
       </p>
     </div>
   </aside>
@@ -211,39 +274,37 @@
   <!-- 右カラム: ドロップと結果 -->
   <section>
     <div id="drop-zone">
-      <div class="big">CSV をここにドロップ</div>
-      <div class="muted">クリックしてファイルを選択することもできます</div>
-      <input type="file" id="file-input" accept=".csv">
+      <div class="big">CSV をここにドロップ (複数ファイル OK)</div>
+      <div class="muted">艇/クルーごとに違うシリアル番号で自動的にまとまります。クリックでも選択できます。</div>
+      <input type="file" id="file-input" accept=".csv" multiple>
     </div>
 
     <div id="error" class="error hidden" style="margin-top: 16px;"></div>
 
-    <div id="results" class="hidden" style="margin-top: 16px;">
-      <div class="kpis">
-        <div class="kpi"><div class="label">総セッション時間</div><div class="value" id="kpi-total">–</div></div>
-        <div class="kpi"><div class="label">指標</div><div class="value" id="kpi-metric">–</div></div>
-        <div class="kpi"><div class="label">ファイル</div><div class="value" id="kpi-file" style="font-size: 0.95rem;">–</div></div>
-      </div>
-
-      <div class="panel" style="margin-bottom: 16px;">
-        <h2>ゾーン別滞在時間</h2>
-        <div class="chart-wrap"><canvas id="bar-chart"></canvas></div>
-        <table id="summary-table">
-          <thead>
-            <tr><th>ゾーン</th><th>時間</th><th>分</th><th>%</th></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-        <div style="margin-top: 12px;">
-          <button id="download-csv" type="button">📥 サマリ CSV をダウンロード</button>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h2>タイムライン (ゾーンで色分け)</h2>
-        <div id="timeline-wrap"><canvas id="timeline-chart"></canvas></div>
+    <div id="top-toolbar" class="hidden">
+      <div class="count" id="session-count">0 件のセッションを読み込み中</div>
+      <div>
+        <button id="download-all-csv" type="button">📥 全クルーのサマリを CSV で</button>
+        <button id="clear-all" class="ghost" type="button" style="margin-left: 6px;">すべてクリア</button>
       </div>
     </div>
+
+    <!-- クルー名エディタ: シリアル番号 → クルー名のマッピング。ブラウザに保存される。 -->
+    <div id="crew-editor" class="panel hidden">
+      <h2>クルー名の設定</h2>
+      <p style="font-size: 0.82rem; color: var(--muted); margin: 0 0 10px;">
+        シリアル番号ごとに好きな名前を付けられます。入力はブラウザに保存され、次に同じ番号の CSV をアップしたときも自動で適用されます。
+      </p>
+      <table>
+        <thead>
+          <tr><th style="width: 38%;">シリアル番号</th><th>クルー名</th><th style="width: 80px;">セッション</th></tr>
+        </thead>
+        <tbody id="crew-editor-body"></tbody>
+      </table>
+    </div>
+
+    <!-- セッションカード: クルーごとに 1 枚 -->
+    <div id="sessions-grid"></div>
   </section>
 </main>
 
@@ -286,6 +347,17 @@ const PRESETS = {
     { name: "Z4 (250-299W)", min: 250, max: 300 },
     { name: "Z5 (300W+)",    min: 300 },
   ],
+  // SPM × HR 複合ゾーン: 両方の条件を満たすストロークだけがそのゾーンに入る。
+  // 「UT2 レートで HR も UT2 帯」= 想定通り / 「UT2 レートで HR AT 帯」= 乖離の兆候、などを検出できる。
+  spm_hr: [
+    { name: "UT2 (同調)",    spm: { min: 16, max: 22 }, hr: { min: 120, max: 150 } },
+    { name: "UT1 (同調)",    spm: { min: 22, max: 26 }, hr: { min: 140, max: 165 } },
+    { name: "AT  (同調)",    spm: { min: 26, max: 30 }, hr: { min: 160, max: 180 } },
+    { name: "TR  (同調)",    spm: { min: 30, max: 34 }, hr: { min: 170, max: 185 } },
+    { name: "AN  (同調)",    spm: { min: 34 },           hr: { min: 180 } },
+    { name: "乖離(低レ高HR)", spm: { max: 26 },           hr: { min: 165 } },
+    { name: "乖離(高レ低HR)", spm: { min: 26 },           hr: { max: 150 } },
+  ],
 };
 
 const METRIC_LABELS = {
@@ -293,6 +365,7 @@ const METRIC_LABELS = {
   hr: "心拍",
   split_s: "500m スプリット",
   power: "パワー",
+  spm_hr: "SPM × HR (複合)",
 };
 
 // tab10 風のパレット。Unknown は灰色。
@@ -307,14 +380,108 @@ const dropZone = $("drop-zone");
 const fileInput = $("file-input");
 const metricSelect = $("metric");
 const zonesBody = $("zones-body");
-const resultsDiv = $("results");
 const errorDiv = $("error");
+const topToolbar = $("top-toolbar");
+const sessionCountEl = $("session-count");
+const crewEditor = $("crew-editor");
+const crewEditorBody = $("crew-editor-body");
+const sessionsGrid = $("sessions-grid");
 
-// 状態: 直近にパースしたデータ
-let lastData = null;
-let lastFileName = null;
-let barChart = null;
-let timelineChart = null;
+// --- 状態 -----------------------------------------------------------
+// アップロード済みの NK セッション。各要素は
+//   { id, filename, metadata: {serial, sessionName, date, startTime, ...}, data,
+//     polarId: null | Polar セッション ID }
+let sessions = [];
+// Polar セッション。各要素は
+//   { id, filename, metadata: {date, startTime, durationStr, avgHr, ...}, samples: [{t, hr}] }
+let polarSessions = [];
+let nextSessionId = 1;
+let nextPolarId = 1;
+
+// セッションごとに生成した Chart.js インスタンス (メトリック変更時に destroy するため)。
+const chartRegistry = new Map();
+
+// カードの詳細表示状態 (セッション ID → bool)。
+const detailOpen = new Map();
+
+// シリアル番号 → ユーザ指定のクルー名。ブラウザに保存して次回も引き継ぐ。
+const CREW_NAMES_KEY = "nk_crew_names_v1";
+let crewNames = (() => {
+  try {
+    const raw = localStorage.getItem(CREW_NAMES_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+})();
+function saveCrewNames() {
+  try { localStorage.setItem(CREW_NAMES_KEY, JSON.stringify(crewNames)); } catch {}
+}
+function crewKeyFor(session) {
+  // シリアルがあればそれを使う。無ければファイル名を artefact キーにする。
+  return session.metadata.serial || `file:${session.filename}`;
+}
+function crewNameFor(session) {
+  const key = crewKeyFor(session);
+  return crewNames[key] || (session.metadata.serial ? `SN ${session.metadata.serial}` : session.filename);
+}
+
+// =========================================================================
+// Polar HR を NK のストロークに時刻で合わせる
+// =========================================================================
+// NK の各ストローク (elapsed_s) に対応する Polar HR を線形補間で算出する。
+// 両者とも「セッション開始からの経過秒」を軸に持つ。ただし
+//   - NK の Session Start Time と Polar の Start time に差がある場合は
+//     その差 (polarOffsetSec) だけ NK 側を進める / 戻す。
+//   - 絶対時刻がどちらかに無い場合は polarOffsetSec=0 (同時開始と仮定)。
+function calcAutoOffset(nkMeta, polarMeta) {
+  // どちらも startTime を持っていれば wall-clock で揃える。
+  // 返り値: NK の経過秒 0 (= NK 開始時刻) に対応する Polar 側の t。
+  //   polar_t_for(nk_elapsed) = nk_elapsed + (nkStart - polarStart)
+  // Polar が NK より前に開始していれば (nkStart - polarStart) > 0 なので、
+  // NK elapsed=0 の時点で Polar は既に数十〜数百秒経過している。
+  if (!nkMeta || !polarMeta) return 0;
+  if (!nkMeta.startTime || !polarMeta.startTime) return 0;
+  const nkT = wallClockSeconds(nkMeta.startTime);
+  const polarT = wallClockSeconds(polarMeta.startTime);
+  if (nkT == null || polarT == null) return 0;
+  return nkT - polarT;
+}
+
+function interpolatePolarHr(nkElapsed, polarSamples, offsetSec) {
+  // polarSamples: 時刻昇順。各 { t: 秒, hr: bpm }。
+  // nkElapsed:  NK の経過秒 (ストローク時刻)。
+  // offsetSec:  NK elapsed=0 に対応する Polar 側の t (calcAutoOffset が返す値)。
+  if (!polarSamples || !polarSamples.length) return NaN;
+  const target = nkElapsed + offsetSec;  // 対応する Polar 時刻。
+  // 範囲外は端の値で代用 (あるいは NaN にしてもよいが、最低限 HR 値が出る方が便利)。
+  if (target <= polarSamples[0].t) return polarSamples[0].hr;
+  const last = polarSamples[polarSamples.length - 1];
+  if (target >= last.t) return last.hr;
+  // 二分探索でサンプル区間を特定。
+  let lo = 0, hi = polarSamples.length - 1;
+  while (lo < hi - 1) {
+    const mid = (lo + hi) >> 1;
+    if (polarSamples[mid].t <= target) lo = mid;
+    else hi = mid;
+  }
+  const a = polarSamples[lo], b = polarSamples[hi];
+  const dt = b.t - a.t;
+  if (dt <= 0) return a.hr;
+  const w = (target - a.t) / dt;
+  return a.hr * (1 - w) + b.hr * w;
+}
+
+// 指定された NK セッションに Polar を適用したデータ配列を返す (副作用なし)。
+// 未ペアなら元の data をそのまま返す。
+function sessionEffectiveData(session) {
+  if (!session.polarId) return session.data;
+  const polar = polarSessions.find((p) => p.id === session.polarId);
+  if (!polar) return session.data;
+  const offset = calcAutoOffset(session.metadata, polar.metadata);
+  return session.data.map((r) => {
+    const hr = interpolatePolarHr(r.elapsed_s, polar.samples, offset);
+    return { ...r, hr: isNaN(hr) ? r.hr : hr };
+  });
+}
 
 // =========================================================================
 // CSV 読み込み・前処理
@@ -352,8 +519,123 @@ function findColumn(columns, ...keywords) {
   });
 }
 
+function extractMetadata(text, headerIdx) {
+  // ヘッダ行より前(プリアンブル)から「Key,Value」形式のメタデータを抽出する。
+  // NK SpeedCoach のプリアンブル例:
+  //   Serial Number,NK-123456
+  //   Session Name,Morning steady-state
+  //   Session Date,2020-01-11
+  //   Session Start Time,09:12:00
+  //   Total Distance (GPS),4735
+  //   Total Elapsed Time,00:20:26.86
+  const lines = text.split(/\r?\n/).slice(0, headerIdx >= 0 ? headerIdx : 30);
+  const meta = {
+    serial: null, sessionName: null,
+    date: null, startTime: null,
+    totalDistance: null, totalTimeStr: null,
+  };
+  for (const line of lines) {
+    // カンマで分割して 2 列以上あるもののみ対象。
+    const cells = line.split(",");
+    if (cells.length < 2) continue;
+    const key = cells[0].trim().toLowerCase();
+    const value = cells.slice(1).join(",").trim();
+    if (!key || !value) continue;
+    // シリアル番号: "Serial Number" / "Serial" / "Device Serial" 等の派生を吸収。
+    if (meta.serial == null && key.includes("serial")) {
+      meta.serial = value;
+    } else if (meta.sessionName == null && key.includes("session") && key.includes("name")) {
+      meta.sessionName = value;
+    } else if (meta.date == null && (key === "date" || (key.includes("session") && key.includes("date")))) {
+      meta.date = value;
+    } else if (meta.startTime == null && key.includes("start") && key.includes("time")) {
+      meta.startTime = value;
+    } else if (meta.totalDistance == null && key.includes("total") && key.includes("distance")) {
+      const n = parseFloat(value);
+      if (!isNaN(n)) meta.totalDistance = n;
+    } else if (meta.totalTimeStr == null && key.includes("total") && key.includes("elapsed")) {
+      meta.totalTimeStr = value;
+    }
+  }
+  return meta;
+}
+
+// =========================================================================
+// Polar CSV のパーサ (Polar Flow 形式)
+// =========================================================================
+// 想定レイアウト:
+//   Row 0: summary header  (Name, Sport, Date, Start time, Duration, ...)
+//   Row 1: summary values
+//   Row 2: data header     (Sample rate, Time, HR (bpm), Speed, ...)
+//   Row 3+: data samples (1 秒毎)
+function detectCsvKind(text) {
+  const firstLines = text.split(/\r?\n/).slice(0, 4).join("\n").toLowerCase();
+  // Polar Flow: "Average heart rate (bpm)" がヘッダに入っている。
+  if (firstLines.includes("average heart rate") && firstLines.includes("sport")) {
+    return "polar";
+  }
+  return "nk";
+}
+
+function parsePolarCsv(text) {
+  const rawLines = text.split(/\r?\n/);
+  if (rawLines.length < 4) {
+    throw new Error("Polar CSV の行数が少なすぎます");
+  }
+  // Row 0/1: summary
+  const sumH = rawLines[0].split(",").map((s) => s.trim());
+  const sumV = rawLines[1].split(",").map((s) => s.trim());
+  const summary = {};
+  for (let i = 0; i < sumH.length; i++) summary[sumH[i]] = sumV[i] || "";
+
+  // Row 2: data header
+  const dataHeader = rawLines[2].split(",").map((s) => s.trim());
+  const timeIdx = dataHeader.findIndex((c) => c.toLowerCase() === "time");
+  const hrIdx = dataHeader.findIndex((c) => c.toLowerCase().includes("hr"));
+  if (timeIdx < 0 || hrIdx < 0) {
+    throw new Error("Polar CSV から Time / HR 列が見つかりませんでした");
+  }
+
+  // Row 3+: samples
+  const samples = [];
+  for (let i = 3; i < rawLines.length; i++) {
+    const cells = rawLines[i].split(",");
+    if (cells.length < 2) continue;
+    const t = parseTimeSeconds(cells[timeIdx]);
+    const hr = parseFloat(cells[hrIdx]);
+    if (isNaN(t) || isNaN(hr)) continue;
+    samples.push({ t, hr });
+  }
+
+  // メタデータ: Date, Start time, Duration から wall-clock 同期用の情報を取り出す。
+  // キーはスペース/ケースを揺らして照合。
+  const findKey = (...kws) => {
+    for (const k of Object.keys(summary)) {
+      const low = k.toLowerCase();
+      if (kws.every((kw) => low.includes(kw))) return summary[k];
+    }
+    return null;
+  };
+  const metadata = {
+    name: findKey("name"),
+    date: findKey("date"),
+    startTime: findKey("start", "time"),
+    durationStr: findKey("duration"),
+    avgHr: parseFloat(findKey("average", "heart") || "NaN"),
+  };
+
+  return { metadata, samples };
+}
+
+// 絶対時刻(HH:MM:SS)を「その日の 0 時からの秒」に変換。
+function wallClockSeconds(hhmmss) {
+  const s = parseTimeSeconds(hhmmss);
+  return isNaN(s) ? null : s;
+}
+
 function parseNkCsv(text) {
   const headerIdx = findHeaderRow(text);
+  const metadata = extractMetadata(text, headerIdx);
   const csvPart = headerIdx >= 0
     ? text.split(/\r?\n/).slice(headerIdx).join("\n")
     : text;
@@ -365,7 +647,7 @@ function parseNkCsv(text) {
     // パース中の警告はログだけ残す (致命的エラーだけ後で判定)。
     console.warn("CSV parse warnings:", parsed.errors.slice(0, 3));
   }
-  return parsed.data;
+  return { metadata, rows: parsed.data };
 }
 
 function prepare(rows) {
@@ -443,11 +725,33 @@ function classifyZone(value, zones) {
   return "Unknown";
 }
 
+// SPM × HR の複合ゾーン分類。ストローク行に対して SPM と HR の両方の
+// 条件を満たすゾーンを返す。いずれかが欠損の場合は Unknown。
+function classifyCompoundZone(row, zones) {
+  const spm = row.spm;
+  const hr = row.hr;
+  if (spm == null || isNaN(spm) || hr == null || isNaN(hr)) return "Unknown";
+  for (const z of zones) {
+    const spmRange = z.spm || {};
+    const hrRange = z.hr || {};
+    const spmLo = spmRange.min ?? -Infinity;
+    const spmHi = spmRange.max ?? Infinity;
+    const hrLo = hrRange.min ?? -Infinity;
+    const hrHi = hrRange.max ?? Infinity;
+    const spmOk = spm >= spmLo && spm < spmHi;
+    const hrOk = hr >= hrLo && hr < hrHi;
+    if (spmOk && hrOk) return z.name;
+  }
+  return "Unknown";
+}
+
 function analyze(data, metric, zones) {
-  // 各ストロークにゾーン名を付与。
+  // 各ストロークにゾーン名を付与。複合指標はストローク全体を渡して両条件を判定。
   const annotated = data.map((r) => ({
     ...r,
-    zone: classifyZone(r[metric], zones),
+    zone: metric === "spm_hr"
+      ? classifyCompoundZone(r, zones)
+      : classifyZone(r[metric], zones),
   }));
   const sums = {};
   let total = 0;
@@ -489,25 +793,10 @@ function zoneColors(zoneNames) {
   return map;
 }
 
-function renderSummaryTable(summary, colors) {
-  const tbody = document.querySelector("#summary-table tbody");
-  tbody.innerHTML = "";
-  for (const r of summary) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td><span class="swatch" style="background:${colors[r.zone]}"></span>${r.zone}</td>
-      <td>${fmtSec(r.time_s)}</td>
-      <td>${r.time_min.toFixed(2)}</td>
-      <td>${r.pct.toFixed(1)}%</td>
-    `;
-    tbody.appendChild(tr);
-  }
-}
-
-function renderBar(summary, metric, colors) {
-  const ctx = $("bar-chart").getContext("2d");
-  if (barChart) barChart.destroy();
-  barChart = new Chart(ctx, {
+function renderBarInto(canvas, summary, metric, colors) {
+  const key = canvas.id;
+  if (chartRegistry.has(key)) chartRegistry.get(key).destroy();
+  const chart = new Chart(canvas.getContext("2d"), {
     type: "bar",
     data: {
       labels: summary.map((r) => r.zone),
@@ -531,17 +820,18 @@ function renderBar(summary, metric, colors) {
           },
         },
       },
-      scales: {
-        x: { title: { display: true, text: "Minutes" } },
-      },
+      scales: { x: { title: { display: true, text: "Minutes" } } },
     },
   });
+  chartRegistry.set(key, chart);
 }
 
-function renderTimeline(annotated, metric, zones, colors) {
-  const ctx = $("timeline-chart").getContext("2d");
-  if (timelineChart) timelineChart.destroy();
-  // ゾーン別に散布点をまとめる (legend に使える)。
+function renderTimelineInto(canvas, annotated, metric, zones, colors) {
+  const key = canvas.id;
+  if (chartRegistry.has(key)) chartRegistry.get(key).destroy();
+  // 複合モードでは Y 軸を SPM にして、HR を点のサイズで表現すると視覚的に見やすい。
+  // が、シンプルに SPM (Y) + ゾーン色分け で十分伝わるので、まずは SPM を Y に取る。
+  const yKey = metric === "spm_hr" ? "spm" : metric;
   const datasets = [];
   const zoneNames = zones.map((z) => z.name).concat(
     annotated.some((r) => r.zone === "Unknown") ? ["Unknown"] : []
@@ -549,8 +839,8 @@ function renderTimeline(annotated, metric, zones, colors) {
   for (const name of zoneNames) {
     const pts = [];
     for (const r of annotated) {
-      if (r.zone === name && !isNaN(r[metric]) && !isNaN(r.elapsed_s)) {
-        pts.push({ x: r.elapsed_s / 60, y: r[metric] });
+      if (r.zone === name && !isNaN(r[yKey]) && !isNaN(r.elapsed_s)) {
+        pts.push({ x: r.elapsed_s / 60, y: r[yKey] });
       }
     }
     if (!pts.length) continue;
@@ -563,25 +853,23 @@ function renderTimeline(annotated, metric, zones, colors) {
       showLine: false,
     });
   }
-  timelineChart = new Chart(ctx, {
+  const chart = new Chart(canvas.getContext("2d"), {
     type: "scatter",
     data: { datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: {
-        legend: { position: "bottom" },
-      },
+      plugins: { legend: { position: "bottom" } },
       scales: {
         x: { title: { display: true, text: "Elapsed (min)" } },
         y: {
-          title: { display: true, text: metric },
-          // スプリットは小さいほど速いので軸を反転すると直感的。
-          reverse: metric === "split_s",
+          title: { display: true, text: metric === "spm_hr" ? "SPM (色=複合ゾーン)" : metric },
+          reverse: yKey === "split_s",
         },
       },
     },
   });
+  chartRegistry.set(key, chart);
 }
 
 function showError(msg) {
@@ -595,50 +883,269 @@ function hideError() {
   errorDiv.textContent = "";
 }
 
-function rerun() {
-  if (!lastData) return;
-  hideError();
-  const metric = metricSelect.value;
-  const zones = readZonesFromUI();
-  if (!zones.length) {
-    showError("ゾーンが 1 つもありません。少なくとも 1 行追加してください。");
-    return;
-  }
-  // 指標の列が空 (全て NaN) なら弾く。
-  const hasValue = lastData.some((r) => !isNaN(r[metric]));
-  if (!hasValue) {
-    showError(`この CSV には「${METRIC_LABELS[metric]}」に対応するデータがありませんでした。別の指標を選んでください。`);
-    return;
-  }
-
-  const { annotated, summary, total } = analyze(lastData, metric, zones);
-  const zoneNames = summary.map((r) => r.zone);
-  const colors = zoneColors(zoneNames);
-
-  $("kpi-total").textContent = fmtSec(total);
-  $("kpi-metric").textContent = METRIC_LABELS[metric];
-  $("kpi-file").textContent = lastFileName || "–";
-
-  renderSummaryTable(summary, colors);
-  renderBar(summary, metric, colors);
-  renderTimeline(annotated, metric, zones, colors);
-
-  resultsDiv.classList.remove("hidden");
-  // ダウンロード用に最新のサマリを保持。
-  resultsDiv.dataset.summary = JSON.stringify(summary);
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+  }[c]));
 }
 
-// =========================================================================
-// ゾーンエディタ UI
-// =========================================================================
-function buildZoneRow(z = { name: "", min: null, max: null }) {
-  const tr = document.createElement("tr");
-  tr.innerHTML = `
-    <td><input type="text" value="${z.name ?? ""}" placeholder="名前"></td>
-    <td><input type="number" step="any" class="num" value="${z.min ?? ""}" placeholder="−∞"></td>
-    <td><input type="number" step="any" class="num" value="${z.max ?? ""}" placeholder="+∞"></td>
-    <td><button type="button" class="del">×</button></td>
+function renderCrewEditor() {
+  // シリアル番号別にセッションをグループ化 → 編集用の表を作る。
+  const groups = new Map();
+  for (const s of sessions) {
+    const key = crewKeyFor(s);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  }
+  crewEditorBody.innerHTML = "";
+  if (groups.size === 0) {
+    crewEditor.classList.add("hidden");
+    return;
+  }
+  crewEditor.classList.remove("hidden");
+  for (const [key, list] of groups.entries()) {
+    const serial = list[0].metadata.serial;
+    const displayKey = serial ? `SN ${serial}` : `(file: ${list[0].filename})`;
+    const currentName = crewNames[key] || "";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${escapeHtml(displayKey)}</td>
+      <td><input type="text" value="${escapeHtml(currentName)}" placeholder="${escapeHtml(serial ? `SN ${serial}` : list[0].filename)}"></td>
+      <td class="count">${list.length} 件</td>
+    `;
+    const input = tr.querySelector("input");
+    input.addEventListener("input", () => {
+      const name = input.value.trim();
+      if (name) crewNames[key] = name;
+      else delete crewNames[key];
+      saveCrewNames();
+      renderSessionCards();
+    });
+    crewEditorBody.appendChild(tr);
+  }
+}
+
+function renderSessionCards() {
+  // 既存のカードを全部作り直す。カード数は通常少ないので DOM を素朴に作り直す。
+  // チャートは chartRegistry で管理されるため、destroy される。
+  for (const chart of chartRegistry.values()) chart.destroy();
+  chartRegistry.clear();
+  sessionsGrid.innerHTML = "";
+
+  if (sessions.length === 0 && polarSessions.length === 0) {
+    topToolbar.classList.add("hidden");
+    return;
+  }
+
+  const metric = metricSelect.value;
+  const zones = readZonesFromUI();
+  topToolbar.classList.remove("hidden");
+  const polarPart = polarSessions.length ? `  ·  Polar ${polarSessions.length} 件` : "";
+  sessionCountEl.textContent = `${sessions.length} 件の NK セッション${polarPart}  ·  指標: ${METRIC_LABELS[metric]}`;
+
+  // クルー名順 → 読み込み順でソート (同じクルーはまとめて表示)。
+  const sorted = [...sessions].sort((a, b) => {
+    const an = crewNameFor(a);
+    const bn = crewNameFor(b);
+    if (an !== bn) return an.localeCompare(bn, "ja");
+    return a.id - b.id;
+  });
+
+  for (const s of sorted) {
+    sessionsGrid.appendChild(buildCard(s, metric, zones));
+  }
+}
+
+function buildCard(session, metric, zones) {
+  const card = document.createElement("div");
+  card.className = "session-card";
+
+  // Polar が紐付いていればその HR を適用したデータを使う。
+  const data = sessionEffectiveData(session);
+  // 複合モードは SPM と HR の両方が必要。
+  const hasValue = metric === "spm_hr"
+    ? data.some((r) => !isNaN(r.spm) && !isNaN(r.hr))
+    : data.some((r) => !isNaN(r[metric]));
+  if (!hasValue) {
+    const hint = metric === "spm_hr"
+      ? "SPM と HR の両方が必要です。Polar CSV を追加してから再度選択してください。"
+      : "サイドバーで別の指標を選んでください。";
+    card.innerHTML = `
+      <div class="crew">${escapeHtml(crewNameFor(session))}</div>
+      <div class="meta">${escapeHtml(session.filename)}</div>
+      <div class="error" style="margin-top: 8px;">
+        この CSV には「${METRIC_LABELS[metric]}」のデータがありません。${hint}
+      </div>
+      <div class="card-actions">
+        <button class="ghost" data-act="remove">× 削除</button>
+      </div>
+    `;
+    card.querySelector('[data-act="remove"]').addEventListener("click", () => removeSession(session.id));
+    return card;
+  }
+
+  const { annotated, summary, total } = analyze(data, metric, zones);
+  const colors = zoneColors(summary.map((r) => r.zone));
+
+  const distanceStr = session.metadata.totalDistance != null
+    ? `${session.metadata.totalDistance.toLocaleString()} m` : "–";
+  const sessionNameStr = session.metadata.sessionName
+    ? ` · ${escapeHtml(session.metadata.sessionName)}` : "";
+  const serialStr = session.metadata.serial
+    ? `SN ${escapeHtml(session.metadata.serial)}` : "(シリアル未検出)";
+
+  // Polar ドロップダウン: アップロード済みの Polar セッションから選択。
+  const polarOptions = polarSessions.map((p) => {
+    const label = `${p.filename}` +
+      (p.metadata.startTime ? ` (${p.metadata.startTime})` : "");
+    const sel = session.polarId === p.id ? " selected" : "";
+    return `<option value="${p.id}"${sel}>${escapeHtml(label)}</option>`;
+  }).join("");
+  const polarRow = polarSessions.length
+    ? `<div class="meta" style="margin-top: 4px;">
+         Polar HR:
+         <select data-act="pair" style="font-size: 0.8rem; padding: 2px 6px;">
+           <option value="">(使わない)</option>${polarOptions}
+         </select>
+         ${session.polarId ? '<span style="color: #059669;">✓ 同期中</span>' : ""}
+       </div>`
+    : "";
+
+  card.innerHTML = `
+    <div class="crew">${escapeHtml(crewNameFor(session))}</div>
+    <div class="meta">${serialStr} · ${escapeHtml(session.filename)}${sessionNameStr}</div>
+    ${polarRow}
+    <div class="mini-kpis">
+      <span><b>${fmtSec(total)}</b> 総時間</span>
+      <span><b>${distanceStr}</b> 距離</span>
+      <span><b>${data.length}</b> ストローク</span>
+    </div>
+    <div class="chart-mini"><canvas></canvas></div>
+    <div class="card-actions">
+      <button data-act="toggle">${detailOpen.get(session.id) ? "詳細を閉じる" : "詳細を開く"}</button>
+      <button class="ghost" data-act="download">📥 CSV</button>
+      <button class="ghost" data-act="remove" style="margin-left: auto;">× 削除</button>
+    </div>
+    <div class="detail ${detailOpen.get(session.id) ? "" : "hidden"}">
+      <table id="summary-table"><thead><tr><th>ゾーン</th><th>時間</th><th>分</th><th>%</th></tr></thead><tbody></tbody></table>
+      <div class="chart-timeline"><canvas></canvas></div>
+    </div>
   `;
+
+  const barCanvas = card.querySelector(".chart-mini canvas");
+  barCanvas.id = `bar-${session.id}`;
+  renderBarInto(barCanvas, summary, metric, colors);
+
+  // 詳細: 表 + タイムライン。
+  const tbody = card.querySelector("table#summary-table tbody");
+  for (const r of summary) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><span class="swatch" style="background:${colors[r.zone]}"></span>${escapeHtml(r.zone)}</td>
+      <td>${fmtSec(r.time_s)}</td>
+      <td>${r.time_min.toFixed(2)}</td>
+      <td>${r.pct.toFixed(1)}%</td>
+    `;
+    tbody.appendChild(tr);
+  }
+  const timelineCanvas = card.querySelector(".chart-timeline canvas");
+  timelineCanvas.id = `timeline-${session.id}`;
+  if (detailOpen.get(session.id)) {
+    renderTimelineInto(timelineCanvas, annotated, metric, zones, colors);
+  }
+
+  // 各セッションのサマリをカードに保持 (CSV ダウンロード用)。
+  card.dataset.summary = JSON.stringify(summary);
+  card.dataset.crew = crewNameFor(session);
+
+  card.querySelector('[data-act="toggle"]').addEventListener("click", () => {
+    const isOpen = detailOpen.get(session.id) || false;
+    detailOpen.set(session.id, !isOpen);
+    renderSessionCards();
+  });
+  card.querySelector('[data-act="remove"]').addEventListener("click", () => removeSession(session.id));
+  card.querySelector('[data-act="download"]').addEventListener("click", () => {
+    downloadSummaryCsv([{ crew: crewNameFor(session), summary }], session.filename);
+  });
+  // Polar ドロップダウンの変更 → ペアリング更新 → 再描画。
+  const pairSelect = card.querySelector('[data-act="pair"]');
+  if (pairSelect) {
+    pairSelect.addEventListener("change", (e) => {
+      const v = e.target.value;
+      session.polarId = v ? Number(v) : null;
+      renderSessionCards();
+    });
+  }
+
+  return card;
+}
+
+function removeSession(id) {
+  sessions = sessions.filter((s) => s.id !== id);
+  detailOpen.delete(id);
+  renderAll();
+}
+
+function renderAll() {
+  hideError();
+  renderCrewEditor();
+  renderSessionCards();
+}
+
+// 設定変更 (指標 / ゾーン) 時に再描画するための旧 rerun 互換関数。
+function rerun() { renderAll(); }
+
+// =========================================================================
+// ゾーンエディタ UI (メトリックに応じて単一/複合の列を切り替え)
+// =========================================================================
+function isCompoundMetric() {
+  return metricSelect.value === "spm_hr";
+}
+
+function updateZonesHeader() {
+  const thead = $("zones-thead");
+  const note = $("zones-compound-note");
+  if (isCompoundMetric()) {
+    thead.innerHTML = `
+      <tr>
+        <th>名前</th>
+        <th>SPM 下限</th><th>SPM 上限</th>
+        <th>HR 下限</th><th>HR 上限</th>
+        <th></th>
+      </tr>
+    `;
+    note.classList.remove("hidden");
+  } else {
+    thead.innerHTML = `
+      <tr><th>名前</th><th>下限</th><th>上限</th><th></th></tr>
+    `;
+    note.classList.add("hidden");
+  }
+}
+
+function buildZoneRow(z) {
+  const tr = document.createElement("tr");
+  if (isCompoundMetric()) {
+    const zz = z || { name: "", spm: {}, hr: {} };
+    const spm = zz.spm || {};
+    const hr = zz.hr || {};
+    tr.innerHTML = `
+      <td><input type="text" value="${zz.name ?? ""}" placeholder="名前"></td>
+      <td><input type="number" step="any" class="num" value="${spm.min ?? ""}" placeholder="−∞"></td>
+      <td><input type="number" step="any" class="num" value="${spm.max ?? ""}" placeholder="+∞"></td>
+      <td><input type="number" step="any" class="num" value="${hr.min  ?? ""}" placeholder="−∞"></td>
+      <td><input type="number" step="any" class="num" value="${hr.max  ?? ""}" placeholder="+∞"></td>
+      <td><button type="button" class="del">×</button></td>
+    `;
+  } else {
+    const zz = z || { name: "", min: null, max: null };
+    tr.innerHTML = `
+      <td><input type="text" value="${zz.name ?? ""}" placeholder="名前"></td>
+      <td><input type="number" step="any" class="num" value="${zz.min ?? ""}" placeholder="−∞"></td>
+      <td><input type="number" step="any" class="num" value="${zz.max ?? ""}" placeholder="+∞"></td>
+      <td><button type="button" class="del">×</button></td>
+    `;
+  }
   tr.querySelector(".del").addEventListener("click", () => {
     tr.remove();
     rerun();
@@ -650,6 +1157,7 @@ function buildZoneRow(z = { name: "", min: null, max: null }) {
 }
 
 function loadPreset(metric) {
+  updateZonesHeader();
   zonesBody.innerHTML = "";
   for (const z of PRESETS[metric]) {
     zonesBody.appendChild(buildZoneRow(z));
@@ -658,16 +1166,30 @@ function loadPreset(metric) {
 
 function readZonesFromUI() {
   const zones = [];
+  const compound = isCompoundMetric();
   for (const tr of zonesBody.querySelectorAll("tr")) {
     const inputs = tr.querySelectorAll("input");
+    if (!inputs.length) continue;
     const name = inputs[0].value.trim();
-    const minStr = inputs[1].value.trim();
-    const maxStr = inputs[2].value.trim();
-    if (!name && !minStr && !maxStr) continue;
-    const z = { name: name || "(unnamed)" };
-    if (minStr !== "") z.min = parseFloat(minStr);
-    if (maxStr !== "") z.max = parseFloat(maxStr);
-    zones.push(z);
+    if (compound) {
+      // [name, spm_min, spm_max, hr_min, hr_max]
+      const vals = [1, 2, 3, 4].map((i) => inputs[i].value.trim());
+      if (!name && vals.every((v) => v === "")) continue;
+      const z = { name: name || "(unnamed)", spm: {}, hr: {} };
+      if (vals[0] !== "") z.spm.min = parseFloat(vals[0]);
+      if (vals[1] !== "") z.spm.max = parseFloat(vals[1]);
+      if (vals[2] !== "") z.hr.min  = parseFloat(vals[2]);
+      if (vals[3] !== "") z.hr.max  = parseFloat(vals[3]);
+      zones.push(z);
+    } else {
+      const minStr = inputs[1].value.trim();
+      const maxStr = inputs[2].value.trim();
+      if (!name && !minStr && !maxStr) continue;
+      const z = { name: name || "(unnamed)" };
+      if (minStr !== "") z.min = parseFloat(minStr);
+      if (maxStr !== "") z.max = parseFloat(maxStr);
+      zones.push(z);
+    }
   }
   return zones;
 }
@@ -686,38 +1208,103 @@ metricSelect.addEventListener("change", () => {
 loadPreset("spm");
 
 // =========================================================================
-// ファイル取り込み (ドロップ / クリック選択)
+// ファイル取り込み (ドロップ / クリック選択、複数ファイル対応)
 // =========================================================================
-function handleFile(file) {
-  if (!file) return;
-  lastFileName = file.name;
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    try {
-      const text = e.target.result;
-      const rows = parseNkCsv(text);
-      if (!rows.length) {
-        showError("CSV にデータ行が見つかりませんでした。NK SpeedCoach のエクスポート CSV か確認してください。");
-        lastData = null;
-        return;
+function handleOneFile(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target.result;
+        const kind = detectCsvKind(text);
+        if (kind === "polar") {
+          const { metadata, samples } = parsePolarCsv(text);
+          if (!samples.length) {
+            resolve({ ok: false, filename: file.name, reason: "Polar CSV にサンプルがありませんでした" });
+            return;
+          }
+          resolve({
+            ok: true, kind: "polar",
+            polar: { id: nextPolarId++, filename: file.name, metadata, samples },
+          });
+          return;
+        }
+        // NK
+        const { metadata, rows } = parseNkCsv(text);
+        if (!rows || !rows.length) {
+          resolve({ ok: false, filename: file.name, reason: "データ行が見つかりませんでした" });
+          return;
+        }
+        const data = prepare(rows);
+        if (!data.length) {
+          resolve({ ok: false, filename: file.name, reason: "解釈できるストロークがありませんでした" });
+          return;
+        }
+        resolve({
+          ok: true, kind: "nk",
+          session: { id: nextSessionId++, filename: file.name, metadata, data, polarId: null },
+        });
+      } catch (err) {
+        console.error(err);
+        resolve({ ok: false, filename: file.name, reason: err.message });
       }
-      lastData = prepare(rows);
-      if (!lastData.length) {
-        showError("CSV から解釈できるストロークデータがありませんでした。");
-        return;
+    };
+    reader.onerror = () => resolve({ ok: false, filename: file.name, reason: "ファイル読み込み失敗" });
+    reader.readAsText(file);
+  });
+}
+
+function autoPairNewPolars() {
+  // 新しく追加された Polar を、まだ紐付いていない NK セッションに自動で割り当てる。
+  // 基準はセッション日付 (Date) + startTime が最も近いもの。どちらも情報が無い
+  // NK セッションには、残っている Polar を先着順で適用する。
+  for (const s of sessions) {
+    if (s.polarId) continue;
+    if (!polarSessions.length) break;
+    // 日付一致を優先。
+    let best = null;
+    let bestDistance = Infinity;
+    for (const p of polarSessions) {
+      let score = 0;
+      if (s.metadata.date && p.metadata.date && s.metadata.date === p.metadata.date) score -= 10000;
+      if (s.metadata.startTime && p.metadata.startTime) {
+        const ds = wallClockSeconds(s.metadata.startTime);
+        const dp = wallClockSeconds(p.metadata.startTime);
+        if (ds != null && dp != null) score += Math.abs(ds - dp);
       }
-      rerun();
-    } catch (err) {
-      console.error(err);
-      showError("読み込み中にエラー: " + err.message);
+      if (score < bestDistance) { bestDistance = score; best = p; }
     }
-  };
-  reader.onerror = () => showError("ファイルの読み込みに失敗しました。");
-  reader.readAsText(file);
+    if (best) s.polarId = best.id;
+  }
+}
+
+async function handleFiles(fileList) {
+  if (!fileList || !fileList.length) return;
+  const files = Array.from(fileList);
+  const results = await Promise.all(files.map(handleOneFile));
+
+  const failures = [];
+  let addedAny = false;
+  for (const r of results) {
+    if (!r.ok) { failures.push(`${r.filename}: ${r.reason}`); continue; }
+    if (r.kind === "polar") { polarSessions.push(r.polar); addedAny = true; }
+    else                    { sessions.push(r.session);     addedAny = true; }
+  }
+  if (addedAny) autoPairNewPolars();
+  if (failures.length) {
+    showError("以下のファイルは読み込めませんでした:\n" + failures.join("\n"));
+  } else {
+    hideError();
+  }
+  renderAll();
 }
 
 dropZone.addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", (e) => handleFile(e.target.files[0]));
+fileInput.addEventListener("change", (e) => {
+  handleFiles(e.target.files);
+  // 同じファイルを再選択できるよう input をリセット。
+  e.target.value = "";
+});
 
 // ページ全体でドロップできるようにしつつ、視覚的なハイライトは drop-zone に。
 ["dragenter", "dragover"].forEach((ev) => {
@@ -733,35 +1320,60 @@ fileInput.addEventListener("change", (e) => handleFile(e.target.files[0]));
   });
 });
 document.addEventListener("drop", (e) => {
-  const file = e.dataTransfer && e.dataTransfer.files[0];
-  if (file) handleFile(file);
+  const files = e.dataTransfer && e.dataTransfer.files;
+  if (files && files.length) handleFiles(files);
 });
 
 // =========================================================================
-// サマリ CSV ダウンロード
+// サマリ CSV ダウンロード (1 枚のカード or 全クルー分)
 // =========================================================================
-$("download-csv").addEventListener("click", () => {
-  const raw = resultsDiv.dataset.summary;
-  if (!raw) return;
-  const summary = JSON.parse(raw);
-  const header = ["zone", "time_s", "time_min", "pct"];
+function downloadSummaryCsv(items, nameHint) {
+  // items: [{ crew, summary: [{zone, time_s, time_min, pct}, ...] }, ...]
+  const header = ["crew", "zone", "time_s", "time_min", "pct"];
   const lines = [header.join(",")];
-  for (const r of summary) {
-    lines.push([
-      `"${r.zone.replace(/"/g, '""')}"`,
-      r.time_s.toFixed(2),
-      r.time_min.toFixed(4),
-      r.pct.toFixed(2),
-    ].join(","));
+  for (const item of items) {
+    for (const r of item.summary) {
+      lines.push([
+        `"${String(item.crew).replace(/"/g, '""')}"`,
+        `"${String(r.zone).replace(/"/g, '""')}"`,
+        r.time_s.toFixed(2),
+        r.time_min.toFixed(4),
+        r.pct.toFixed(2),
+      ].join(","));
+    }
   }
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  const base = (lastFileName || "session").replace(/\.csv$/i, "");
+  const base = (nameHint || "sessions").replace(/\.csv$/i, "");
   a.download = `${base}_time_in_zones.csv`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+$("download-all-csv").addEventListener("click", () => {
+  if (!sessions.length) return;
+  const metric = metricSelect.value;
+  const zones = readZonesFromUI();
+  const items = [];
+  for (const s of sessions) {
+    const data = sessionEffectiveData(s);
+    if (!data.some((r) => !isNaN(r[metric]))) continue;
+    const { summary } = analyze(data, metric, zones);
+    items.push({ crew: crewNameFor(s), summary });
+  }
+  downloadSummaryCsv(items, `all_crews_${metric}`);
+});
+
+$("clear-all").addEventListener("click", () => {
+  const total = sessions.length + polarSessions.length;
+  if (!total) return;
+  if (!confirm(`読み込み済みの ${sessions.length} 件の NK セッションと ${polarSessions.length} 件の Polar を全てクリアしますか? クルー名の設定は残ります。`)) return;
+  sessions = [];
+  polarSessions = [];
+  detailOpen.clear();
+  renderAll();
 });
 </script>
 

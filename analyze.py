@@ -89,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
         metric = args.metric
         zones = DEFAULT_PRESETS[metric]
 
-    raw = read_nk_csv(args.csv)
+    raw, metadata = read_nk_csv(args.csv, return_metadata=True)
     df = prepare(raw)
 
     if metric not in df.columns:
@@ -99,6 +99,20 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+
+    # セッションヘッダ: シリアル番号・セッション名・総距離・総時間があれば表示。
+    header_bits = []
+    if metadata.serial:
+        header_bits.append(f"Serial: {metadata.serial}")
+    if metadata.session_name:
+        header_bits.append(f"Session: {metadata.session_name}")
+    if metadata.total_distance_m is not None:
+        header_bits.append(f"Distance: {metadata.total_distance_m:.0f} m")
+    if metadata.total_elapsed_str:
+        header_bits.append(f"Elapsed: {metadata.total_elapsed_str}")
+    if header_bits:
+        print()
+        print("  ·  ".join(header_bits))
 
     df["zone"] = classify_zones(df[metric].tolist(), zones)
     summary = time_in_zones(df, zones)
