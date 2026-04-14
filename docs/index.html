@@ -317,46 +317,47 @@
 // =========================================================================
 // プリセット (Python 版と同じ境界値)
 // =========================================================================
+// =========================================================================
+// プリセット: 日本代表が採用する 3 ゾーンモデルに合わせてある。
+// 国際的には  Z1 = LT1 以下 / Z2 = LT1-LT2 / Z3 = LT2 以上 という定義が一般的で、
+// 代表的な鋳型として以下のデフォルト値を入れている。チームや個人の閾値
+// (LT1, LT2, HR max, CP, 2K 基準スプリット等) に応じてサイドバーで直接上書き可能。
+// =========================================================================
 const PRESETS = {
   spm: [
-    { name: "R (~16)",     max: 16 },
-    { name: "UT2 (16-21)", min: 16, max: 22 },
-    { name: "UT1 (22-25)", min: 22, max: 26 },
-    { name: "AT (26-29)",  min: 26, max: 30 },
-    { name: "TR (30-33)",  min: 30, max: 34 },
-    { name: "AN (34+)",    min: 34 },
+    { name: "Z1 (低 / UT)",        max: 22 },
+    { name: "Z2 (中 / LT1-LT2)",   min: 22, max: 28 },
+    { name: "Z3 (高 / LT2 以上)",  min: 28 },
   ],
   hr: [
-    { name: "Z1 (~130)",    max: 130 },
-    { name: "Z2 (130-149)", min: 130, max: 150 },
-    { name: "Z3 (150-164)", min: 150, max: 165 },
-    { name: "Z4 (165-179)", min: 165, max: 180 },
-    { name: "Z5 (180+)",    min: 180 },
+    { name: "Z1 (~150)",           max: 150 },
+    { name: "Z2 (150-170)",        min: 150, max: 170 },
+    { name: "Z3 (170+)",           min: 170 },
   ],
+  // split_s は「秒/500m」。値が小さいほど速い → Z3 が最速帯。
   split_s: [
-    { name: "UT2 (2:10+)",     min: 130 },
-    { name: "UT1 (2:00-2:09)", min: 120, max: 130 },
-    { name: "AT  (1:50-1:59)", min: 110, max: 120 },
-    { name: "TR  (1:40-1:49)", min: 100, max: 110 },
-    { name: "AN  (~1:39)",     max: 100 },
+    { name: "Z1 (2:00+)",          min: 120 },
+    { name: "Z2 (1:45-2:00)",      min: 105, max: 120 },
+    { name: "Z3 (~1:45)",          max: 105 },
   ],
   power: [
-    { name: "Z1 (~150W)",    max: 150 },
-    { name: "Z2 (150-199W)", min: 150, max: 200 },
-    { name: "Z3 (200-249W)", min: 200, max: 250 },
-    { name: "Z4 (250-299W)", min: 250, max: 300 },
-    { name: "Z5 (300W+)",    min: 300 },
+    { name: "Z1 (~200W)",          max: 200 },
+    { name: "Z2 (200-280W)",       min: 200, max: 280 },
+    { name: "Z3 (280W+)",          min: 280 },
   ],
-  // SPM × HR 複合ゾーン: 両方の条件を満たすストロークだけがそのゾーンに入る。
-  // 「UT2 レートで HR も UT2 帯」= 想定通り / 「UT2 レートで HR AT 帯」= 乖離の兆候、などを検出できる。
+  // SPM × HR 複合ゾーン: 3 ゾーンそれぞれで「SPM と HR が同調」している時間と、
+  // 乖離している時間を分離して可視化する。乖離は閾値を超える真の異常だけが入るよう
+  // 厳しめに設定している。
   spm_hr: [
-    { name: "UT2 (同調)",    spm: { min: 16, max: 22 }, hr: { min: 120, max: 150 } },
-    { name: "UT1 (同調)",    spm: { min: 22, max: 26 }, hr: { min: 140, max: 165 } },
-    { name: "AT  (同調)",    spm: { min: 26, max: 30 }, hr: { min: 160, max: 180 } },
-    { name: "TR  (同調)",    spm: { min: 30, max: 34 }, hr: { min: 170, max: 185 } },
-    { name: "AN  (同調)",    spm: { min: 34 },           hr: { min: 180 } },
-    { name: "乖離(低レ高HR)", spm: { max: 26 },           hr: { min: 165 } },
-    { name: "乖離(高レ低HR)", spm: { min: 26 },           hr: { max: 150 } },
+    // 同調: SPM と HR が同じ 3 ゾーンの帯に収まっている。HR 帯は隣接ゾーンと
+    // かなり重なるくらい広げて、現実のバラつき(境界付近の揺れ・HR 応答の遅れ)を吸収。
+    { name: "Z1 同調",              spm: { max: 22 },          hr: { max: 170 } },
+    { name: "Z2 同調",              spm: { min: 22, max: 28 }, hr: { min: 110, max: 185 } },
+    { name: "Z3 同調",              spm: { min: 28 },           hr: { min: 150 } },
+    // 乖離ゾーン: SPM は低いのに HR が高い(疲労・脱水・オーバー)/ SPM は高いのに
+    // HR が低い(効率良く漕げている、または HR が追いつく前)のフォールバック。
+    { name: "乖離 (低レ高HR)",      spm: { max: 22 },          hr: { min: 170 } },
+    { name: "乖離 (高レ低HR)",      spm: { min: 28 },          hr: { max: 150 } },
   ],
 };
 
@@ -414,6 +415,75 @@ let crewNames = (() => {
 })();
 function saveCrewNames() {
   try { localStorage.setItem(CREW_NAMES_KEY, JSON.stringify(crewNames)); } catch {}
+}
+
+// シリアル番号 → 選手プロファイル (漸増負荷試験などから得た閾値)。
+// シェイプ: { lt1_hr, lt2_hr, hr_max, lt1_w, lt2_w, w_max, split_2k_s }
+// 値が埋まっているメトリックだけ、その選手の CSV を解析する際に 3 ゾーンを
+// 自動生成して classification に使う。
+const ATHLETE_PROFILES_KEY = "nk_athlete_profiles_v1";
+let athleteProfiles = (() => {
+  try {
+    const raw = localStorage.getItem(ATHLETE_PROFILES_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+})();
+// 初期値: 提供いただいた SN 3145955 の漸増負荷試験データ(2/4 mmol/L 閾値)。
+// 既に手動で編集されている場合は上書きしないため、キーがあるか確認してから追加。
+if (!athleteProfiles["3145955"]) {
+  athleteProfiles["3145955"] = {
+    lt1_hr: 160, lt2_hr: 177, hr_max: 184,
+    lt1_w: 321, lt2_w: 407, w_max: 421,
+    split_2k_s: 94,  // 06:16 / 4 = 94 秒
+  };
+}
+function saveAthleteProfiles() {
+  try { localStorage.setItem(ATHLETE_PROFILES_KEY, JSON.stringify(athleteProfiles)); } catch {}
+}
+saveAthleteProfiles();  // 初期プロファイルを保存。
+
+// 選手プロファイルから 3 ゾーンを生成する。生成できなければ null を返す。
+function zonesFromProfile(profile, metric) {
+  if (!profile) return null;
+  if (metric === "hr" && profile.lt1_hr && profile.lt2_hr) {
+    return [
+      { name: `Z1 (<${profile.lt1_hr})`,                                 max: profile.lt1_hr },
+      { name: `Z2 (${profile.lt1_hr}-${profile.lt2_hr})`, min: profile.lt1_hr, max: profile.lt2_hr },
+      { name: `Z3 (${profile.lt2_hr}+)`,                   min: profile.lt2_hr },
+    ];
+  }
+  if (metric === "power" && profile.lt1_w && profile.lt2_w) {
+    return [
+      { name: `Z1 (<${profile.lt1_w}W)`,                                   max: profile.lt1_w },
+      { name: `Z2 (${profile.lt1_w}-${profile.lt2_w}W)`,   min: profile.lt1_w, max: profile.lt2_w },
+      { name: `Z3 (${profile.lt2_w}W+)`,                   min: profile.lt2_w },
+    ];
+  }
+  if (metric === "split_s" && profile.split_2k_s) {
+    // 2K pace を基準に Z2/Z3 境界を推定 (直接の閾値データが無いため大まかな経験値)。
+    // Z3 (高強度) : 2K pace + 5 秒より速い
+    // Z2 (中強度) : 2K pace + 5 〜 +15 秒
+    // Z1 (低強度) : 2K pace + 15 秒より遅い
+    const z3Boundary = profile.split_2k_s + 5;
+    const z1Boundary = profile.split_2k_s + 15;
+    const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+    return [
+      { name: `Z1 (>${fmt(z1Boundary)})`,                                    min: z1Boundary },
+      { name: `Z2 (${fmt(z3Boundary)}-${fmt(z1Boundary)})`, min: z3Boundary, max: z1Boundary },
+      { name: `Z3 (<${fmt(z3Boundary)})`,                                    max: z3Boundary },
+    ];
+  }
+  if (metric === "spm_hr" && profile.lt1_hr && profile.lt2_hr) {
+    // HR ゾーンは測定値ベース、SPM ゾーンは汎用の 3 ゾーン (22/28)。
+    return [
+      { name: "Z1 同調", spm: { max: 22 },          hr: { max: profile.lt1_hr } },
+      { name: "Z2 同調", spm: { min: 22, max: 28 }, hr: { min: profile.lt1_hr, max: profile.lt2_hr } },
+      { name: "Z3 同調", spm: { min: 28 },           hr: { min: profile.lt2_hr } },
+      { name: "乖離 (低レ高HR)", spm: { max: 22 },   hr: { min: profile.lt2_hr } },
+      { name: "乖離 (高レ低HR)", spm: { min: 28 },   hr: { max: profile.lt1_hr } },
+    ];
+  }
+  return null;
 }
 function crewKeyFor(session) {
   // シリアルがあればそれを使う。無ければファイル名を artefact キーにする。
@@ -907,13 +977,56 @@ function renderCrewEditor() {
     const serial = list[0].metadata.serial;
     const displayKey = serial ? `SN ${serial}` : `(file: ${list[0].filename})`;
     const currentName = crewNames[key] || "";
+    const profile = serial ? (athleteProfiles[serial] || {}) : null;
+
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${escapeHtml(displayKey)}</td>
-      <td><input type="text" value="${escapeHtml(currentName)}" placeholder="${escapeHtml(serial ? `SN ${serial}` : list[0].filename)}"></td>
+      <td><input type="text" data-field="name" value="${escapeHtml(currentName)}" placeholder="${escapeHtml(serial ? `SN ${serial}` : list[0].filename)}"></td>
       <td class="count">${list.length} 件</td>
     `;
-    const input = tr.querySelector("input");
+    // シリアルがある行には「選手プロファイル (LT1/LT2)」展開ボタンを追加。
+    if (serial) {
+      const expandRow = document.createElement("tr");
+      const p = profile || {};
+      expandRow.innerHTML = `
+        <td colspan="3" style="padding-top: 0;">
+          <details ${Object.keys(p).length ? "open" : ""}>
+            <summary style="cursor: pointer; font-size: 0.8rem; color: var(--muted);">🧪 体力測定 (LT1/LT2 からゾーン自動生成)</summary>
+            <div style="display: grid; grid-template-columns: auto 80px auto 80px auto 80px; gap: 4px 8px; margin-top: 8px; font-size: 0.82rem; align-items: center;">
+              <label>LT1 HR</label><input type="number" data-profile-field="lt1_hr" value="${p.lt1_hr ?? ""}" placeholder="160">
+              <label>LT2 HR</label><input type="number" data-profile-field="lt2_hr" value="${p.lt2_hr ?? ""}" placeholder="177">
+              <label>HRmax</label><input type="number" data-profile-field="hr_max" value="${p.hr_max ?? ""}" placeholder="184">
+              <label>LT1 W</label> <input type="number" data-profile-field="lt1_w"  value="${p.lt1_w  ?? ""}" placeholder="321">
+              <label>LT2 W</label> <input type="number" data-profile-field="lt2_w"  value="${p.lt2_w  ?? ""}" placeholder="407">
+              <label>Wmax</label>  <input type="number" data-profile-field="w_max"  value="${p.w_max  ?? ""}" placeholder="421">
+              <label>2K (秒)</label><input type="number" data-profile-field="split_2k_s" value="${p.split_2k_s ?? ""}" placeholder="94">
+              <span style="grid-column: span 5; font-size: 0.72rem; color: var(--muted);">2K は「推定タイム (秒) ÷ 4」。例: 6:16 → 376/4 = 94 秒。</span>
+            </div>
+          </details>
+        </td>
+      `;
+      expandRow.querySelectorAll("[data-profile-field]").forEach((inp) => {
+        inp.addEventListener("change", () => {
+          const field = inp.dataset.profileField;
+          const val = inp.value.trim();
+          if (!athleteProfiles[serial]) athleteProfiles[serial] = {};
+          if (val === "") delete athleteProfiles[serial][field];
+          else athleteProfiles[serial][field] = parseFloat(val);
+          // 全フィールド空ならエントリを削除。
+          if (Object.keys(athleteProfiles[serial]).length === 0) delete athleteProfiles[serial];
+          saveAthleteProfiles();
+          renderSessionCards();
+        });
+      });
+      tr.dataset.pairedWith = expandRow;  // reference (not used, but for clarity)
+      crewEditorBody.appendChild(tr);
+      crewEditorBody.appendChild(expandRow);
+    } else {
+      crewEditorBody.appendChild(tr);
+    }
+
+    const input = tr.querySelector('[data-field="name"]');
     input.addEventListener("input", () => {
       const name = input.value.trim();
       if (name) crewNames[key] = name;
@@ -921,7 +1034,6 @@ function renderCrewEditor() {
       saveCrewNames();
       renderSessionCards();
     });
-    crewEditorBody.appendChild(tr);
   }
 }
 
@@ -956,12 +1068,21 @@ function renderSessionCards() {
   }
 }
 
-function buildCard(session, metric, zones) {
+function buildCard(session, metric, globalZones) {
   const card = document.createElement("div");
   card.className = "session-card";
 
   // Polar が紐付いていればその HR を適用したデータを使う。
   const data = sessionEffectiveData(session);
+
+  // このセッションのシリアル番号に選手プロファイルがあれば、
+  // 汎用プリセットではなくそこから導出したゾーンで分類する。
+  const serial = session.metadata.serial;
+  const profile = serial ? athleteProfiles[serial] : null;
+  const derivedZones = profile ? zonesFromProfile(profile, metric) : null;
+  const zones = derivedZones || globalZones;
+  const usingProfile = !!derivedZones;
+
   // 複合モードは SPM と HR の両方が必要。
   const hasValue = metric === "spm_hr"
     ? data.some((r) => !isNaN(r.spm) && !isNaN(r.hr))
@@ -1011,10 +1132,15 @@ function buildCard(session, metric, zones) {
        </div>`
     : "";
 
+  const profileBadge = usingProfile
+    ? `<div class="meta" style="margin-top: 4px; color: #059669;">🧪 選手プロファイル (LT1=${profile.lt1_hr} / LT2=${profile.lt2_hr}) を適用中</div>`
+    : "";
+
   card.innerHTML = `
     <div class="crew">${escapeHtml(crewNameFor(session))}</div>
     <div class="meta">${serialStr} · ${escapeHtml(session.filename)}${sessionNameStr}</div>
     ${polarRow}
+    ${profileBadge}
     <div class="mini-kpis">
       <span><b>${fmtSec(total)}</b> 総時間</span>
       <span><b>${distanceStr}</b> 距離</span>
@@ -1355,11 +1481,14 @@ function downloadSummaryCsv(items, nameHint) {
 $("download-all-csv").addEventListener("click", () => {
   if (!sessions.length) return;
   const metric = metricSelect.value;
-  const zones = readZonesFromUI();
+  const globalZones = readZonesFromUI();
   const items = [];
   for (const s of sessions) {
     const data = sessionEffectiveData(s);
     if (!data.some((r) => !isNaN(r[metric]))) continue;
+    // 選手プロファイルがあればそのゾーンを優先。
+    const profile = s.metadata.serial ? athleteProfiles[s.metadata.serial] : null;
+    const zones = (profile && zonesFromProfile(profile, metric)) || globalZones;
     const { summary } = analyze(data, metric, zones);
     items.push({ crew: crewNameFor(s), summary });
   }
