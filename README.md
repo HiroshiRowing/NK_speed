@@ -4,171 +4,115 @@
 「選手がどの強度でどれくらいの時間滞在していたか」を一目で把握するためのツールです。
 
 - 指標はストロークレート / 心拍 / 500m スプリット / パワーから選択
-- 5 段階ゾーン (R・UT2・UT1・AT・TR・AN など) のプリセットを同梱
-- ゾーン境界は YAML で自由に書き換え可能
-- 出力は ① 滞在時間の横棒グラフ ② ゾーンで色分けした時系列 ③ CSV サマリ
+- 5〜6 段階ゾーン (R・UT2・UT1・AT・TR・AN など) のプリセットを同梱
+- ゾーン境界はブラウザ上で直接編集可能
+- 出力は 滞在時間の横棒グラフ / ゾーンで色分けした時系列 / サマリ CSV
 
-## セットアップ
+---
+
+## 🖱️ 使い方 (インストール不要, おすすめ)
+
+### 方法 1: GitHub Pages の URL にアクセスする
+
+公開 URL(セットアップ後に発行):
+
+> `https://hiroshirowing.github.io/NK_speed/`
+
+このページの真ん中にあるドロップエリアに CSV をドラッグ&ドロップするだけです。
+**Python も pip も不要。ブラウザだけで完結します。**
+
+CSV の中身はブラウザ内で処理されるだけで、どこにも送信されません。
+
+### 方法 2: HTML ファイルを直接開く
+
+1. このリポジトリをダウンロード (Code → Download ZIP → 解凍)
+2. `docs/index.html` を **ダブルクリック** して Safari / Chrome で開く
+3. 中央のドロップエリアに CSV を投げ入れる
+
+ローカルファイルとして動くので、オフラインでも使えます。
+
+---
+
+## 🚀 初回だけ: GitHub Pages を有効化する (オーナー向け)
+
+この PR をマージしたあと、**一度だけ以下の設定**をすれば方法 1 が使えるようになります。
+
+1. リポジトリの **Settings** → 左メニューの **Pages** を開く
+2. **Build and deployment** の **Source** を `GitHub Actions` に変更
+3. 保存 (自動で次回 push 時にデプロイされます)
+
+設定後、GitHub の **Actions** タブで `Deploy docs to Pages` ワークフローが緑になれば完了。
+`https://hiroshirowing.github.io/NK_speed/` にアクセスできるようになります。
+
+---
+
+## 📱 iPad / スマホから使いたい
+
+方法 1 の URL ならそのままスマホのブラウザで開けます。
+艇庫の iPad や選手のスマホから、その場で CSV をドロップして解析できます。
+
+---
+
+## 💻 おまけ: Python で CLI / Streamlit から使う
+
+プログラムに詳しい方向け。`requirements.txt` の依存関係(pandas, matplotlib,
+streamlit, pyyaml)を入れれば以下のコマンドが使えます。
 
 ```bash
-pip install -r requirements.txt
-```
+# 集計結果を標準出力 + PNG 2 枚 + サマリ CSV で出力
+python analyze.py sample_data/sample_session.csv
 
-## 🖱️ ブラウザでドラッグ&ドロップ (おすすめ)
-
-```bash
+# Streamlit でローカル Web UI
 streamlit run app.py
 ```
 
-ターミナルに
+CLI のオプション一覧は `python analyze.py --help` で。
 
-```
-  Local URL:   http://localhost:8501
-  Network URL: http://192.168.x.x:8501
-```
-
-と表示されるので、ブラウザで開いてください。ページの真ん中にある
-ドロップエリアに CSV を放り込むだけで、ゾーン別滞在時間の表・横棒グラフ・
-タイムラインが自動で表示されます。
-
-- サイドバーで **指標 (SPM / HR / スプリット / パワー)** を切り替え可能
-- ゾーン境界もサイドバー上で直接編集可能 (YAML。変更は即反映)
-- サマリ CSV はボタンひとつでダウンロード
-- `Network URL` を同じ Wi-Fi の iPad / スマホから開けば、艇庫の
-  タブレットからそのまま解析できます
-
-停止するときはターミナルで `Ctrl+C`。
-
-## 💻 CLI から使う
-
-### 1. デフォルト (ストロークレートでゾーン分け)
-
-```bash
-python analyze.py path/to/session.csv
-```
-
-出力例 (同梱のサンプルセッション):
-
-```
-=== Time in zones (spm) ===
-Zone                     Time   Minutes       %
-------------------------------------------------
-R (~16)                  0:47      0.78    3.8%
-UT2 (16-21)             12:17     12.29   60.2%
-UT1 (22-25)              3:26      3.43   16.8%
-AT (26-29)               2:07      2.11   10.4%
-TR (30-33)               1:13      1.22    6.0%
-AN (34+)                 0:33      0.56    2.7%
-------------------------------------------------
-Total                   20:24     20.39  100.0%
-```
-
-### 2. 指標を変える
-
-```bash
-python analyze.py session.csv --metric hr        # 心拍
-python analyze.py session.csv --metric split_s   # 500m スプリット (秒)
-python analyze.py session.csv --metric power     # パワー (Empower オールロックのみ)
-```
-
-### 3. ゾーン境界を自分好みに
-
-`zones_example.yaml` をコピーして書き換え、`--zones` で指定します。
-
-```yaml
-metric: spm
-zones:
-  - { name: "R",   max: 16 }
-  - { name: "UT2", min: 16, max: 22 }
-  - { name: "UT1", min: 22, max: 26 }
-  - { name: "AT",  min: 26, max: 30 }
-  - { name: "TR",  min: 30, max: 34 }
-  - { name: "AN",  min: 34 }
-```
-
-```bash
-python analyze.py session.csv --zones zones_example.yaml
-```
-
-- `min` は下限(含む)、`max` は上限(含まない)
-- 先頭ゾーンの `min` を省略すると -∞、末尾の `max` を省略すると +∞
-- スプリット (`split_s`) のように「小さいほど速い」指標でも、そのまま秒で境界を書けば OK
-
-### 4. 出力先
-
-デフォルトでカレント直下の `./nk_output/` に以下を生成します。
-
-- `time_in_zones.csv` — ゾーン別の秒・分・割合
-- `time_in_zones.png` — 横棒グラフ
-- `timeline.png` — ゾーンで色分けした時系列プロット
-
-`--output-dir ./out/2024-05-01` のように任意のパスを指定可能。
-`--no-plots` でグラフ生成をスキップし、集計表のみ出せます。
+---
 
 ## 対応する CSV フォーマット
 
 NK SpeedCoach GPS / GPS2 / LiNK エクスポートを想定しています。
-CSV の先頭にあるセッション概要(`Total Distance` 等)を読み飛ばし、
-以下のキーワードを含む行を自動的にデータヘッダとして検出します。
+CSV の先頭にあるセッション概要(`Total Distance` 等)を自動で読み飛ばし、
+以下のキーワードを含む行をデータヘッダとして検出します。
 
 - `Interval` と `Elapsed Time` を同じ行に含む
 - もしくは `Stroke Rate` と `Elapsed` / `Distance` を同じ行に含む
 
-列名には以下が含まれていれば検出されます(機種差を吸収):
+列名の一致は部分マッチ(機種差を吸収):
 
-| 標準名        | 認識キーワード                                  |
-| ------------- | ----------------------------------------------- |
-| `elapsed_s`   | `Elapsed` + `Time`                              |
-| `split_s`     | `Split` (+ `GPS` 優先)                          |
-| `spm`         | `Stroke` + `Rate`                               |
-| `hr`          | `Heart` + `Rate`                                |
-| `power`       | `Power`                                         |
-| `distance_m`  | `Distance` + `GPS` (ただし `Stroke` を含まない) |
+| 用途        | 認識キーワード                                  |
+| ----------- | ----------------------------------------------- |
+| 経過時間    | `Elapsed` + `Time`                              |
+| スプリット  | `Split` (+ `GPS` 優先)                          |
+| ストローク  | `Stroke` + `Rate`                               |
+| 心拍        | `Heart` + `Rate`                                |
+| パワー      | `Power`                                         |
+| 距離        | `Distance` + `GPS` (ただし `Stroke` を含まない) |
 
-サンプル CSV は `sample_data/sample_session.csv` に入っています
-(`python tools/make_sample_csv.py` で再生成可能)。
+サンプル CSV は `sample_data/sample_session.csv` に入っています。
+まずはこれで動作確認してからご自分のセッション CSV を試すのがおすすめです。
 
-## ライブラリとして使う
-
-```python
-from nk_speed import read_nk_csv, prepare, classify_zones, time_in_zones, DEFAULT_PRESETS
-
-raw = read_nk_csv("session.csv")
-df = prepare(raw)
-
-zones = DEFAULT_PRESETS["spm"]
-df["zone"] = classify_zones(df["spm"].tolist(), zones)
-summary = time_in_zones(df, zones)
-print(summary)
-```
+---
 
 ## ディレクトリ構成
 
 ```
 .
-├── app.py                  # Web UI (streamlit run app.py)
-├── analyze.py              # CLI エントリポイント
+├── docs/
+│   └── index.html          # ブラウザ版 (GitHub Pages で公開)
+├── .github/workflows/
+│   └── pages.yml           # docs/ を自動デプロイするワークフロー
+├── app.py                  # Streamlit 版 Web UI (Python 必要)
+├── analyze.py              # CLI (Python 必要)
 ├── nk_speed/
 │   ├── parser.py           # CSV 読み込みと列標準化
 │   ├── zones.py            # ゾーン定義と滞在時間集計
 │   └── plot.py             # matplotlib 可視化
 ├── tools/
-│   └── make_sample_csv.py  # サンプル CSV 生成
+│   └── make_sample_csv.py  # サンプル CSV 生成スクリプト
 ├── sample_data/
 │   └── sample_session.csv  # 約 20 分のフェイクセッション
-├── zones_example.yaml      # ゾーン設定テンプレート
+├── zones_example.yaml      # CLI 用ゾーン設定テンプレート
 └── requirements.txt
 ```
-
-## 🌐 インターネット上で共有したいとき
-
-ローカル起動だけでは LAN 内からしかアクセスできません。
-インターネットに公開したい場合は以下が手軽です。
-
-- **Streamlit Community Cloud** (無料, GitHub 連携): このリポジトリを
-  フォーク/プッシュし、[share.streamlit.io](https://share.streamlit.io)
-  でアプリを登録するだけで `https://<yourname>-nk-speed.streamlit.app`
-  のような URL が発行されます。
-- **Hugging Face Spaces** の Streamlit テンプレート
-- 選手データはセンシティブなので、公開 URL にする場合はアクセス制限
-  (Streamlit Cloud の Secrets 経由でパスワード保護など) を推奨します。
