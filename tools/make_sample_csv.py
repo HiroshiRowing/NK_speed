@@ -29,6 +29,8 @@ def generate(
     seed: int = 42,
     serial: str = "NK-123456",
     session_name: str = "Morning steady-state",
+    session_date: str = "2020-01-11",
+    start_time: str = "09:12:00",
 ) -> None:
     rng = random.Random(seed)
 
@@ -80,6 +82,8 @@ def generate(
         f.write("Session Summary:\n")
         f.write(f"Serial Number,{serial}\n")
         f.write(f"Session Name,{session_name}\n")
+        f.write(f"Session Date,{session_date}\n")
+        f.write(f"Session Start Time,{start_time}\n")
         f.write(f"Total Distance (GPS),{distance:.0f}\n")
         f.write(f"Total Elapsed Time,{_fmt_time(elapsed)}\n")
         f.write(f"Total Strokes,{total_strokes}\n")

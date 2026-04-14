@@ -448,10 +448,16 @@ function extractMetadata(text, headerIdx) {
   // NK SpeedCoach のプリアンブル例:
   //   Serial Number,NK-123456
   //   Session Name,Morning steady-state
+  //   Session Date,2020-01-11
+  //   Session Start Time,09:12:00
   //   Total Distance (GPS),4735
   //   Total Elapsed Time,00:20:26.86
   const lines = text.split(/\r?\n/).slice(0, headerIdx >= 0 ? headerIdx : 30);
-  const meta = { serial: null, sessionName: null, totalDistance: null, totalTimeStr: null };
+  const meta = {
+    serial: null, sessionName: null,
+    date: null, startTime: null,
+    totalDistance: null, totalTimeStr: null,
+  };
   for (const line of lines) {
     // カンマで分割して 2 列以上あるもののみ対象。
     const cells = line.split(",");
@@ -464,6 +470,10 @@ function extractMetadata(text, headerIdx) {
       meta.serial = value;
     } else if (meta.sessionName == null && key.includes("session") && key.includes("name")) {
       meta.sessionName = value;
+    } else if (meta.date == null && (key === "date" || (key.includes("session") && key.includes("date")))) {
+      meta.date = value;
+    } else if (meta.startTime == null && key.includes("start") && key.includes("time")) {
+      meta.startTime = value;
     } else if (meta.totalDistance == null && key.includes("total") && key.includes("distance")) {
       const n = parseFloat(value);
       if (!isNaN(n)) meta.totalDistance = n;
@@ -472,6 +482,79 @@ function extractMetadata(text, headerIdx) {
     }
   }
   return meta;
+}
+
+// =========================================================================
+// Polar CSV のパーサ (Polar Flow 形式)
+// =========================================================================
+// 想定レイアウト:
+//   Row 0: summary header  (Name, Sport, Date, Start time, Duration, ...)
+//   Row 1: summary values
+//   Row 2: data header     (Sample rate, Time, HR (bpm), Speed, ...)
+//   Row 3+: data samples (1 秒毎)
+function detectCsvKind(text) {
+  const firstLines = text.split(/\r?\n/).slice(0, 4).join("\n").toLowerCase();
+  // Polar Flow: "Average heart rate (bpm)" がヘッダに入っている。
+  if (firstLines.includes("average heart rate") && firstLines.includes("sport")) {
+    return "polar";
+  }
+  return "nk";
+}
+
+function parsePolarCsv(text) {
+  const rawLines = text.split(/\r?\n/);
+  if (rawLines.length < 4) {
+    throw new Error("Polar CSV の行数が少なすぎます");
+  }
+  // Row 0/1: summary
+  const sumH = rawLines[0].split(",").map((s) => s.trim());
+  const sumV = rawLines[1].split(",").map((s) => s.trim());
+  const summary = {};
+  for (let i = 0; i < sumH.length; i++) summary[sumH[i]] = sumV[i] || "";
+
+  // Row 2: data header
+  const dataHeader = rawLines[2].split(",").map((s) => s.trim());
+  const timeIdx = dataHeader.findIndex((c) => c.toLowerCase() === "time");
+  const hrIdx = dataHeader.findIndex((c) => c.toLowerCase().includes("hr"));
+  if (timeIdx < 0 || hrIdx < 0) {
+    throw new Error("Polar CSV から Time / HR 列が見つかりませんでした");
+  }
+
+  // Row 3+: samples
+  const samples = [];
+  for (let i = 3; i < rawLines.length; i++) {
+    const cells = rawLines[i].split(",");
+    if (cells.length < 2) continue;
+    const t = parseTimeSeconds(cells[timeIdx]);
+    const hr = parseFloat(cells[hrIdx]);
+    if (isNaN(t) || isNaN(hr)) continue;
+    samples.push({ t, hr });
+  }
+
+  // メタデータ: Date, Start time, Duration から wall-clock 同期用の情報を取り出す。
+  // キーはスペース/ケースを揺らして照合。
+  const findKey = (...kws) => {
+    for (const k of Object.keys(summary)) {
+      const low = k.toLowerCase();
+      if (kws.every((kw) => low.includes(kw))) return summary[k];
+    }
+    return null;
+  };
+  const metadata = {
+    name: findKey("name"),
+    date: findKey("date"),
+    startTime: findKey("start", "time"),
+    durationStr: findKey("duration"),
+    avgHr: parseFloat(findKey("average", "heart") || "NaN"),
+  };
+
+  return { metadata, samples };
+}
+
+// 絶対時刻(HH:MM:SS)を「その日の 0 時からの秒」に変換。
+function wallClockSeconds(hhmmss) {
+  const s = parseTimeSeconds(hhmmss);
+  return isNaN(s) ? null : s;
 }
 
 function parseNkCsv(text) {
