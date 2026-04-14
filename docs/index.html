@@ -183,7 +183,7 @@
   .session-card .detail { margin-top: 12px; }
   .session-card .detail.hidden { display: none; }
   .session-card .chart-mini { height: 200px; position: relative; }
-  .session-card .chart-timeline { height: 220px; position: relative; margin-top: 10px; }
+  .session-card .chart-timeline { height: 280px; position: relative; margin-top: 10px; }
   .session-card summary-table { font-size: 0.85rem; }
   /* クルー名エディタ */
   #crew-editor { margin-top: 16px; }
@@ -1006,6 +1006,32 @@ function renderTimelineInto(canvas, annotated, metric, zones, colors) {
   // 複合モードでは Y 軸を SPM にして、HR を点のサイズで表現すると視覚的に見やすい。
   // が、シンプルに SPM (Y) + ゾーン色分け で十分伝わるので、まずは SPM を Y に取る。
   const yKey = metric === "spm_hr" ? "spm" : metric;
+
+  // インターバル練習だとレスト時の値 (スプリットが 500 秒超など) が Y 軸を引っ張り、
+  // ON 時のデータが上部に潰れる問題があるため、パーセンタイルで外れ値を視覚的に除外する。
+  // split_s (小さいほど速い / レストで大きく外れる) は特に厳しく: 0〜25 パーセンタイル + 20% マージンで
+  // 速い側に集中した表示にする。HR/SPM/Power は通常 5〜95 パーセンタイル。
+  const values = annotated.map((r) => r[yKey]).filter((v) => !isNaN(v)).sort((a, b) => a - b);
+  let yMin, yMax;
+  if (values.length >= 20) {
+    if (yKey === "split_s") {
+      // 最速値〜中央値の範囲 + マージンで、ON フェーズを含む作業帯を中心に表示。
+      // レスト時の極端に遅いスプリット (p50 を大きく超える) は Y 軸から外れる。
+      const p50 = values[Math.floor(values.length * 0.50)];
+      const fastest = values[0];
+      const range = Math.max(p50 - fastest, 1);
+      yMin = fastest - range * 0.1;
+      yMax = p50 + range * 0.2;
+    } else {
+      const p5  = values[Math.floor(values.length * 0.05)];
+      const p95 = values[Math.floor(values.length * 0.95)];
+      const range = Math.max(p95 - p5, 1);
+      yMin = p5 - range * 0.1;
+      yMax = p95 + range * 0.1;
+      // 正の値が主のメトリックは下限を 0 で切る。
+      if (yMin < 0) yMin = 0;
+    }
+  }
   const datasets = [];
   const zoneNames = zones.map((z) => z.name).concat(
     annotated.some((r) => r.zone === "Unknown") ? ["Unknown"] : []
@@ -1039,6 +1065,9 @@ function renderTimelineInto(canvas, annotated, metric, zones, colors) {
         y: {
           title: { display: true, text: metric === "spm_hr" ? "SPM (色=複合ゾーン)" : metric },
           reverse: yKey === "split_s",
+          // 外れ値を除外するために手動で min/max を設定 (values が少ない場合は undefined で auto)。
+          ...(yMin !== undefined ? { min: yMin } : {}),
+          ...(yMax !== undefined ? { max: yMax } : {}),
         },
       },
     },
