@@ -6,6 +6,7 @@
 <title>NK SpeedCoach 強度ゾーン解析</title>
 <!-- Chart.js (可視化) と PapaParse (CSV パース) を CDN から読み込み。 -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <style>
   :root {
@@ -1422,6 +1423,8 @@ function renderAccumulatedSection(period, containerId, sectionId) {
         labels: periodKeys.map((k) => formatPeriodLabel(k, period)),
         datasets: barDatasets,
       },
+      // datalabels プラグインは opt-in (グローバル登録だと全チャートに波及するため)。
+      plugins: [ChartDataLabels],
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -1436,6 +1439,20 @@ function renderAccumulatedSection(period, containerId, sectionId) {
                 const secs = Math.round((mins - totalM) * 60);
                 return `${item.dataset.label}: ${totalM}:${String(secs).padStart(2, "0")}`;
               },
+            },
+          },
+          datalabels: {
+            // 各棒の上に「M:SS」を表示。値 0 は非表示にして見た目の散らかりを防ぐ。
+            anchor: "end",
+            align: "end",
+            offset: 2,
+            color: "#1f2937",
+            font: { size: 10, weight: 600 },
+            formatter: (mins) => {
+              if (!mins || mins < 0.1) return "";  // 約 6 秒未満は非表示
+              const totalM = Math.floor(mins);
+              const secs = Math.round((mins - totalM) * 60);
+              return `${totalM}:${String(secs).padStart(2, "0")}`;
             },
           },
         },
@@ -1460,6 +1477,7 @@ function renderAccumulatedSection(period, containerId, sectionId) {
           backgroundColor: zoneNames.map((zn) => colors[zn]),
         }],
       },
+      plugins: [ChartDataLabels],
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -1475,6 +1493,19 @@ function renderAccumulatedSection(period, containerId, sectionId) {
                 const secs = Math.round((mins - totalM) * 60);
                 return `${item.label}: ${totalM}:${String(secs).padStart(2, "0")} (${pct}%)`;
               },
+            },
+          },
+          datalabels: {
+            // スライス内に「%」を表示。小さいスライス(3% 未満)はラベル非表示に。
+            color: "#fff",
+            font: { size: 12, weight: 700 },
+            textStrokeColor: "rgba(0,0,0,0.55)",
+            textStrokeWidth: 2,
+            formatter: (mins, ctx) => {
+              if (grandSum <= 0) return "";
+              const pct = mins * 60 / grandSum * 100;
+              if (pct < 3) return "";
+              return `${pct.toFixed(1)}%`;
             },
           },
         },
