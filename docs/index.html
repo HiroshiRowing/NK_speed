@@ -250,15 +250,14 @@
         <option value="hr">心拍 (HR, bpm)</option>
         <option value="split_s">500m スプリット (秒)</option>
         <option value="power">パワー (W)</option>
+        <option value="spm_hr">SPM × HR (複合) — 両方の条件を満たす時間</option>
       </select>
     </div>
 
     <div class="panel">
       <h2>ゾーン境界</h2>
       <table class="zones">
-        <thead>
-          <tr><th>名前</th><th>下限</th><th>上限</th><th></th></tr>
-        </thead>
+        <thead id="zones-thead"></thead>
         <tbody id="zones-body"></tbody>
       </table>
       <div class="zones-actions">
@@ -267,6 +266,7 @@
       </div>
       <p style="font-size: 0.78rem; color: var(--muted); margin: 10px 0 0;">
         下限は含む / 上限は含まない。空欄にすると「下限なし」「上限なし」になります。
+        <span id="zones-compound-note" class="hidden">複合モードでは <b>SPM と HR の両方</b> の条件を満たすストロークだけがそのゾーンに入ります。</span>
       </p>
     </div>
   </aside>
@@ -347,6 +347,17 @@ const PRESETS = {
     { name: "Z4 (250-299W)", min: 250, max: 300 },
     { name: "Z5 (300W+)",    min: 300 },
   ],
+  // SPM × HR 複合ゾーン: 両方の条件を満たすストロークだけがそのゾーンに入る。
+  // 「UT2 レートで HR も UT2 帯」= 想定通り / 「UT2 レートで HR AT 帯」= 乖離の兆候、などを検出できる。
+  spm_hr: [
+    { name: "UT2 (同調)",    spm: { min: 16, max: 22 }, hr: { min: 120, max: 150 } },
+    { name: "UT1 (同調)",    spm: { min: 22, max: 26 }, hr: { min: 140, max: 165 } },
+    { name: "AT  (同調)",    spm: { min: 26, max: 30 }, hr: { min: 160, max: 180 } },
+    { name: "TR  (同調)",    spm: { min: 30, max: 34 }, hr: { min: 170, max: 185 } },
+    { name: "AN  (同調)",    spm: { min: 34 },           hr: { min: 180 } },
+    { name: "乖離(低レ高HR)", spm: { max: 26 },           hr: { min: 165 } },
+    { name: "乖離(高レ低HR)", spm: { min: 26 },           hr: { max: 150 } },
+  ],
 };
 
 const METRIC_LABELS = {
@@ -354,6 +365,7 @@ const METRIC_LABELS = {
   hr: "心拍",
   split_s: "500m スプリット",
   power: "パワー",
+  spm_hr: "SPM × HR (複合)",
 };
 
 // tab10 風のパレット。Unknown は灰色。
@@ -713,11 +725,33 @@ function classifyZone(value, zones) {
   return "Unknown";
 }
 
+// SPM × HR の複合ゾーン分類。ストローク行に対して SPM と HR の両方の
+// 条件を満たすゾーンを返す。いずれかが欠損の場合は Unknown。
+function classifyCompoundZone(row, zones) {
+  const spm = row.spm;
+  const hr = row.hr;
+  if (spm == null || isNaN(spm) || hr == null || isNaN(hr)) return "Unknown";
+  for (const z of zones) {
+    const spmRange = z.spm || {};
+    const hrRange = z.hr || {};
+    const spmLo = spmRange.min ?? -Infinity;
+    const spmHi = spmRange.max ?? Infinity;
+    const hrLo = hrRange.min ?? -Infinity;
+    const hrHi = hrRange.max ?? Infinity;
+    const spmOk = spm >= spmLo && spm < spmHi;
+    const hrOk = hr >= hrLo && hr < hrHi;
+    if (spmOk && hrOk) return z.name;
+  }
+  return "Unknown";
+}
+
 function analyze(data, metric, zones) {
-  // 各ストロークにゾーン名を付与。
+  // 各ストロークにゾーン名を付与。複合指標はストローク全体を渡して両条件を判定。
   const annotated = data.map((r) => ({
     ...r,
-    zone: classifyZone(r[metric], zones),
+    zone: metric === "spm_hr"
+      ? classifyCompoundZone(r, zones)
+      : classifyZone(r[metric], zones),
   }));
   const sums = {};
   let total = 0;
@@ -795,6 +829,9 @@ function renderBarInto(canvas, summary, metric, colors) {
 function renderTimelineInto(canvas, annotated, metric, zones, colors) {
   const key = canvas.id;
   if (chartRegistry.has(key)) chartRegistry.get(key).destroy();
+  // 複合モードでは Y 軸を SPM にして、HR を点のサイズで表現すると視覚的に見やすい。
+  // が、シンプルに SPM (Y) + ゾーン色分け で十分伝わるので、まずは SPM を Y に取る。
+  const yKey = metric === "spm_hr" ? "spm" : metric;
   const datasets = [];
   const zoneNames = zones.map((z) => z.name).concat(
     annotated.some((r) => r.zone === "Unknown") ? ["Unknown"] : []
@@ -802,8 +839,8 @@ function renderTimelineInto(canvas, annotated, metric, zones, colors) {
   for (const name of zoneNames) {
     const pts = [];
     for (const r of annotated) {
-      if (r.zone === name && !isNaN(r[metric]) && !isNaN(r.elapsed_s)) {
-        pts.push({ x: r.elapsed_s / 60, y: r[metric] });
+      if (r.zone === name && !isNaN(r[yKey]) && !isNaN(r.elapsed_s)) {
+        pts.push({ x: r.elapsed_s / 60, y: r[yKey] });
       }
     }
     if (!pts.length) continue;
@@ -826,8 +863,8 @@ function renderTimelineInto(canvas, annotated, metric, zones, colors) {
       scales: {
         x: { title: { display: true, text: "Elapsed (min)" } },
         y: {
-          title: { display: true, text: metric },
-          reverse: metric === "split_s",
+          title: { display: true, text: metric === "spm_hr" ? "SPM (色=複合ゾーン)" : metric },
+          reverse: yKey === "split_s",
         },
       },
     },
@@ -925,13 +962,19 @@ function buildCard(session, metric, zones) {
 
   // Polar が紐付いていればその HR を適用したデータを使う。
   const data = sessionEffectiveData(session);
-  const hasValue = data.some((r) => !isNaN(r[metric]));
+  // 複合モードは SPM と HR の両方が必要。
+  const hasValue = metric === "spm_hr"
+    ? data.some((r) => !isNaN(r.spm) && !isNaN(r.hr))
+    : data.some((r) => !isNaN(r[metric]));
   if (!hasValue) {
+    const hint = metric === "spm_hr"
+      ? "SPM と HR の両方が必要です。Polar CSV を追加してから再度選択してください。"
+      : "サイドバーで別の指標を選んでください。";
     card.innerHTML = `
       <div class="crew">${escapeHtml(crewNameFor(session))}</div>
       <div class="meta">${escapeHtml(session.filename)}</div>
       <div class="error" style="margin-top: 8px;">
-        この CSV には「${METRIC_LABELS[metric]}」のデータがありません。サイドバーで別の指標を選んでください。
+        この CSV には「${METRIC_LABELS[metric]}」のデータがありません。${hint}
       </div>
       <div class="card-actions">
         <button class="ghost" data-act="remove">× 削除</button>
@@ -1053,16 +1096,56 @@ function renderAll() {
 function rerun() { renderAll(); }
 
 // =========================================================================
-// ゾーンエディタ UI
+// ゾーンエディタ UI (メトリックに応じて単一/複合の列を切り替え)
 // =========================================================================
-function buildZoneRow(z = { name: "", min: null, max: null }) {
+function isCompoundMetric() {
+  return metricSelect.value === "spm_hr";
+}
+
+function updateZonesHeader() {
+  const thead = $("zones-thead");
+  const note = $("zones-compound-note");
+  if (isCompoundMetric()) {
+    thead.innerHTML = `
+      <tr>
+        <th>名前</th>
+        <th>SPM 下限</th><th>SPM 上限</th>
+        <th>HR 下限</th><th>HR 上限</th>
+        <th></th>
+      </tr>
+    `;
+    note.classList.remove("hidden");
+  } else {
+    thead.innerHTML = `
+      <tr><th>名前</th><th>下限</th><th>上限</th><th></th></tr>
+    `;
+    note.classList.add("hidden");
+  }
+}
+
+function buildZoneRow(z) {
   const tr = document.createElement("tr");
-  tr.innerHTML = `
-    <td><input type="text" value="${z.name ?? ""}" placeholder="名前"></td>
-    <td><input type="number" step="any" class="num" value="${z.min ?? ""}" placeholder="−∞"></td>
-    <td><input type="number" step="any" class="num" value="${z.max ?? ""}" placeholder="+∞"></td>
-    <td><button type="button" class="del">×</button></td>
-  `;
+  if (isCompoundMetric()) {
+    const zz = z || { name: "", spm: {}, hr: {} };
+    const spm = zz.spm || {};
+    const hr = zz.hr || {};
+    tr.innerHTML = `
+      <td><input type="text" value="${zz.name ?? ""}" placeholder="名前"></td>
+      <td><input type="number" step="any" class="num" value="${spm.min ?? ""}" placeholder="−∞"></td>
+      <td><input type="number" step="any" class="num" value="${spm.max ?? ""}" placeholder="+∞"></td>
+      <td><input type="number" step="any" class="num" value="${hr.min  ?? ""}" placeholder="−∞"></td>
+      <td><input type="number" step="any" class="num" value="${hr.max  ?? ""}" placeholder="+∞"></td>
+      <td><button type="button" class="del">×</button></td>
+    `;
+  } else {
+    const zz = z || { name: "", min: null, max: null };
+    tr.innerHTML = `
+      <td><input type="text" value="${zz.name ?? ""}" placeholder="名前"></td>
+      <td><input type="number" step="any" class="num" value="${zz.min ?? ""}" placeholder="−∞"></td>
+      <td><input type="number" step="any" class="num" value="${zz.max ?? ""}" placeholder="+∞"></td>
+      <td><button type="button" class="del">×</button></td>
+    `;
+  }
   tr.querySelector(".del").addEventListener("click", () => {
     tr.remove();
     rerun();
@@ -1074,6 +1157,7 @@ function buildZoneRow(z = { name: "", min: null, max: null }) {
 }
 
 function loadPreset(metric) {
+  updateZonesHeader();
   zonesBody.innerHTML = "";
   for (const z of PRESETS[metric]) {
     zonesBody.appendChild(buildZoneRow(z));
@@ -1082,16 +1166,30 @@ function loadPreset(metric) {
 
 function readZonesFromUI() {
   const zones = [];
+  const compound = isCompoundMetric();
   for (const tr of zonesBody.querySelectorAll("tr")) {
     const inputs = tr.querySelectorAll("input");
+    if (!inputs.length) continue;
     const name = inputs[0].value.trim();
-    const minStr = inputs[1].value.trim();
-    const maxStr = inputs[2].value.trim();
-    if (!name && !minStr && !maxStr) continue;
-    const z = { name: name || "(unnamed)" };
-    if (minStr !== "") z.min = parseFloat(minStr);
-    if (maxStr !== "") z.max = parseFloat(maxStr);
-    zones.push(z);
+    if (compound) {
+      // [name, spm_min, spm_max, hr_min, hr_max]
+      const vals = [1, 2, 3, 4].map((i) => inputs[i].value.trim());
+      if (!name && vals.every((v) => v === "")) continue;
+      const z = { name: name || "(unnamed)", spm: {}, hr: {} };
+      if (vals[0] !== "") z.spm.min = parseFloat(vals[0]);
+      if (vals[1] !== "") z.spm.max = parseFloat(vals[1]);
+      if (vals[2] !== "") z.hr.min  = parseFloat(vals[2]);
+      if (vals[3] !== "") z.hr.max  = parseFloat(vals[3]);
+      zones.push(z);
+    } else {
+      const minStr = inputs[1].value.trim();
+      const maxStr = inputs[2].value.trim();
+      if (!name && !minStr && !maxStr) continue;
+      const z = { name: name || "(unnamed)" };
+      if (minStr !== "") z.min = parseFloat(minStr);
+      if (maxStr !== "") z.max = parseFloat(maxStr);
+      zones.push(z);
+    }
   }
   return zones;
 }
