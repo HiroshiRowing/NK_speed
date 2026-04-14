@@ -220,7 +220,20 @@
     color: var(--muted);
     margin-bottom: 10px;
   }
+  .accum-crew .accum-charts {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 14px;
+    align-items: center;
+  }
+  @media (max-width: 700px) {
+    .accum-crew .accum-charts { grid-template-columns: 1fr; }
+  }
   .accum-crew .accum-chart {
+    position: relative;
+    height: 220px;
+  }
+  .accum-crew .accum-pie {
     position: relative;
     height: 220px;
   }
@@ -339,23 +352,22 @@
       </table>
     </div>
 
+    <!-- 累積サマリ: 月間と週間を別々に、シリアル別に上から表示。 -->
+    <div id="accumulated-month-section" class="hidden" style="margin-top: 16px;">
+      <h2 style="margin: 0 0 12px; font-size: 1rem; color: var(--muted);">📅 月間累積サマリ (シリアル別)</h2>
+      <div id="accumulated-month-container"></div>
+    </div>
+
+    <div id="accumulated-week-section" class="hidden" style="margin-top: 16px;">
+      <h2 style="margin: 0 0 12px; font-size: 1rem; color: var(--muted);">📆 週間累積サマリ (シリアル別)</h2>
+      <div id="accumulated-week-container"></div>
+    </div>
+
+    <div id="sessions-header" class="hidden" style="margin-top: 24px;">
+      <h2 style="margin: 0 0 12px; font-size: 1rem; color: var(--muted);">🗂 各セッションの内訳</h2>
+    </div>
     <!-- セッションカード: クルーごとに 1 枚 -->
     <div id="sessions-grid"></div>
-
-    <!-- 累積サマリ: シリアル毎に、週 or 月で束ねたゾーン滞在時間を表示。 -->
-    <div id="accumulated-section" class="hidden" style="margin-top: 24px;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
-        <h2 style="margin: 0; font-size: 1rem; color: var(--muted);">📊 累積サマリ (シリアル別)</h2>
-        <div style="display: flex; gap: 6px; align-items: center; font-size: 0.9rem;">
-          <label for="accumulated-period">期間:</label>
-          <select id="accumulated-period">
-            <option value="week" selected>週間</option>
-            <option value="month">月間</option>
-          </select>
-        </div>
-      </div>
-      <div id="accumulated-container"></div>
-    </div>
   </section>
 </main>
 
@@ -1304,11 +1316,13 @@ function removeSession(id) {
 }
 
 // =========================================================================
-// 累積サマリ: シリアル別に週/月で束ねる
+// 累積サマリ: シリアル別に月/週で束ねる
+//   - グループ棒グラフ (期間 x ゾーン) で「量」を確認
+//   - 円グラフ (全期間のゾーン配分) で「割合」を確認
 // =========================================================================
-function renderAccumulated() {
-  const container = $("accumulated-container");
-  const section = $("accumulated-section");
+function renderAccumulatedSection(period, containerId, sectionId) {
+  const container = $(containerId);
+  const section = $(sectionId);
   if (!sessions.length) {
     section.classList.add("hidden");
     container.innerHTML = "";
@@ -1317,7 +1331,6 @@ function renderAccumulated() {
 
   const metric = metricSelect.value;
   const globalZones = readZonesFromUI();
-  const period = $("accumulated-period").value;
 
   // シリアル (クルーキー) でグループ化。
   const groups = new Map();
@@ -1327,7 +1340,6 @@ function renderAccumulated() {
     groups.get(key).push(s);
   }
 
-  // 日付が取れないセッションがあれば注釈を出す。
   let anyDated = false;
   container.innerHTML = "";
   for (const [key, crewSessions] of groups.entries()) {
@@ -1347,10 +1359,7 @@ function renderAccumulated() {
       if (!byPeriod.has(pk)) byPeriod.set(pk, []);
       byPeriod.get(pk).push(s);
     }
-    if (byPeriod.size === 0) {
-      // このクルーの全セッションで日付が取れなかった。
-      continue;
-    }
+    if (byPeriod.size === 0) continue;
     anyDated = true;
 
     // 期間キーを昇順にソート。
@@ -1373,6 +1382,10 @@ function renderAccumulated() {
       }
     }
 
+    // 全期間のゾーン合計 (円グラフ + 表のフッタ用)。
+    const grandTotals = zoneNames.map((zn) => zoneTotals[zn].reduce((a, b) => a + b, 0));
+    const grandSum = grandTotals.reduce((a, b) => a + b, 0);
+
     // DOM を生成。
     const crewDiv = document.createElement("div");
     crewDiv.className = "accum-crew";
@@ -1382,32 +1395,39 @@ function renderAccumulated() {
     crewDiv.innerHTML = `
       <h3>${escapeHtml(displayName)}</h3>
       <div class="sub">${serial ? `SN ${escapeHtml(serial)}` : "(no serial)"} · ${byPeriod.size} 期間 · 合計 ${crewSessions.length - undated} セッション${undated ? ` (日付不明 ${undated} 件を除外)` : ""}${bandsStr}</div>
-      <div class="accum-chart"><canvas></canvas></div>
+      <div class="accum-charts">
+        <div class="accum-chart"><canvas data-chart="bar"></canvas></div>
+        <div class="accum-pie"><canvas data-chart="pie"></canvas></div>
+      </div>
       <table class="accum-table"></table>
     `;
     container.appendChild(crewDiv);
 
-    // スタック棒グラフ (Chart.js)。
-    const canvas = crewDiv.querySelector("canvas");
-    canvas.id = `accum-${key.replace(/[^A-Za-z0-9]/g, "_")}`;
-    if (chartRegistry.has(canvas.id)) chartRegistry.get(canvas.id).destroy();
     const colors = zoneColors(zoneNames);
-    const datasets = zoneNames.map((zn) => ({
+    const safeKey = key.replace(/[^A-Za-z0-9]/g, "_");
+
+    // --- グループ棒グラフ (期間 x ゾーン) ---
+    // ゾーンごとに並列に並べることで、各期間内で「どのゾーンをどれだけ漕いだか」が直感的に見える。
+    const barCanvas = crewDiv.querySelector('canvas[data-chart="bar"]');
+    barCanvas.id = `accum-bar-${period}-${safeKey}`;
+    if (chartRegistry.has(barCanvas.id)) chartRegistry.get(barCanvas.id).destroy();
+    const barDatasets = zoneNames.map((zn) => ({
       label: zn,
-      data: zoneTotals[zn].map((s) => s / 60),  // 分単位
+      data: zoneTotals[zn].map((s) => s / 60),  // 分
       backgroundColor: colors[zn],
     }));
-    const chart = new Chart(canvas.getContext("2d"), {
+    const barChart = new Chart(barCanvas.getContext("2d"), {
       type: "bar",
       data: {
         labels: periodKeys.map((k) => formatPeriodLabel(k, period)),
-        datasets,
+        datasets: barDatasets,
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
           legend: { position: "bottom" },
+          title: { display: true, text: "量 (各ゾーン別)" },
           tooltip: {
             callbacks: {
               label: (item) => {
@@ -1420,14 +1440,49 @@ function renderAccumulated() {
           },
         },
         scales: {
-          x: { stacked: true },
-          y: { stacked: true, title: { display: true, text: "Minutes" } },
+          x: { stacked: false },
+          y: { stacked: false, beginAtZero: true, title: { display: true, text: "Minutes" } },
         },
       },
     });
-    chartRegistry.set(canvas.id, chart);
+    chartRegistry.set(barCanvas.id, barChart);
 
-    // テーブル (各期間の秒・分・合計)。
+    // --- 円グラフ (全期間のゾーン配分 %) ---
+    const pieCanvas = crewDiv.querySelector('canvas[data-chart="pie"]');
+    pieCanvas.id = `accum-pie-${period}-${safeKey}`;
+    if (chartRegistry.has(pieCanvas.id)) chartRegistry.get(pieCanvas.id).destroy();
+    const pieChart = new Chart(pieCanvas.getContext("2d"), {
+      type: "doughnut",
+      data: {
+        labels: zoneNames,
+        datasets: [{
+          data: grandTotals.map((s) => s / 60),  // 分
+          backgroundColor: zoneNames.map((zn) => colors[zn]),
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: "bottom" },
+          title: { display: true, text: "割合 (全期間)" },
+          tooltip: {
+            callbacks: {
+              label: (item) => {
+                const mins = item.raw;
+                const pct = grandSum > 0 ? (mins * 60 / grandSum * 100).toFixed(1) : "0.0";
+                const totalM = Math.floor(mins);
+                const secs = Math.round((mins - totalM) * 60);
+                return `${item.label}: ${totalM}:${String(secs).padStart(2, "0")} (${pct}%)`;
+              },
+            },
+          },
+        },
+      },
+    });
+    chartRegistry.set(pieCanvas.id, pieChart);
+
+    // --- 詳細テーブル (各期間 x ゾーン時間) ---
     const table = crewDiv.querySelector("table.accum-table");
     const headerRow = `<tr><th>期間</th>${zoneNames.map((z) => `<th>${escapeHtml(z)}</th>`).join("")}<th>合計</th></tr>`;
     const bodyRows = periodKeys.map((pk, i) => {
@@ -1435,10 +1490,14 @@ function renderAccumulated() {
       const total = zoneNames.reduce((acc, zn) => acc + zoneTotals[zn][i], 0);
       return `<tr><td>${escapeHtml(formatPeriodLabel(pk, period))}</td>${cells.map((c) => `<td>${c}</td>`).join("")}<td><b>${fmtSec(total)}</b></td></tr>`;
     }).join("");
-    // 全期間合計行も追加。
-    const grandTotals = zoneNames.map((zn) => zoneTotals[zn].reduce((a, b) => a + b, 0));
-    const grandSum = grandTotals.reduce((a, b) => a + b, 0);
-    const footer = `<tr style="border-top: 2px solid var(--border); font-weight: 600;"><td>合計</td>${grandTotals.map((t) => `<td>${fmtSec(t)}</td>`).join("")}<td>${fmtSec(grandSum)}</td></tr>`;
+    const footer = `<tr style="border-top: 2px solid var(--border); font-weight: 600;">
+      <td>合計</td>
+      ${grandTotals.map((t) => {
+        const pct = grandSum > 0 ? ` (${(t / grandSum * 100).toFixed(1)}%)` : "";
+        return `<td>${fmtSec(t)}${pct}</td>`;
+      }).join("")}
+      <td>${fmtSec(grandSum)}</td>
+    </tr>`;
     table.innerHTML = `<thead>${headerRow}</thead><tbody>${bodyRows}${footer}</tbody>`;
   }
 
@@ -1448,15 +1507,19 @@ function renderAccumulated() {
   section.classList.remove("hidden");
 }
 
+function renderAccumulated() {
+  renderAccumulatedSection("month", "accumulated-month-container", "accumulated-month-section");
+  renderAccumulatedSection("week",  "accumulated-week-container",  "accumulated-week-section");
+  // セッション一覧ヘッダは、セッションがあるときだけ表示。
+  $("sessions-header").classList.toggle("hidden", sessions.length === 0);
+}
+
 function renderAll() {
   hideError();
   renderCrewEditor();
   renderSessionCards();
   renderAccumulated();
 }
-
-// 期間セレクタの変更で再描画。(script 末尾なので DOM は読み込み済み)
-$("accumulated-period").addEventListener("change", renderAccumulated);
 
 // 設定変更 (指標 / ゾーン) 時に再描画するための旧 rerun 互換関数。
 function rerun() { renderAll(); }
