@@ -559,7 +559,94 @@ function crewNameFor(session) {
 }
 
 // =========================================================================
-// セッション日時の抽出と、週間/月間の集計キー生成
+// インターバル検出: 1 本目・2 本目… を自動で分ける
+// =========================================================================
+// セッション内の「本 (rep)」を検出する。NK の挙動によって 2 通りのパターンを
+// 拾えるようフォールバックを用意している:
+//   1) 壁時計ベース: 休憩中に elapsed_s が進む → 連続する 2 ストロークの間隔が
+//      15 秒を超えたらそこで rep が切れたとみなす。
+//   2) 活動時間ベース: NK が休憩中にクロックを止める / 漕がないのでストロークが
+//      記録されない → 間隔が空いて見えないので、SPM が一定以上 (しきい値)に
+//      連続して達している区間を rep とみなす。
+// 2 本以上検出できたら rep 分けされたとみなして UI に表示する。
+function detectIntervals(data) {
+  if (!data || data.length < 2) return [];
+
+  // 方式 1: 時刻ギャップベース
+  const gapThreshold = 15;  // 秒
+  const gapReps = [];
+  let start = 0;
+  for (let i = 1; i < data.length; i++) {
+    const gap = data[i].elapsed_s - data[i - 1].elapsed_s;
+    if (isFinite(gap) && gap > gapThreshold) {
+      gapReps.push({ start, end: i - 1 });
+      start = i;
+    }
+  }
+  gapReps.push({ start, end: data.length - 1 });
+  if (gapReps.length >= 2) return gapReps;
+
+  // 方式 2: SPM しきい値ベース
+  // SPM の中央値を基準に「明らかに漕いでいる」を判定。
+  const spms = data.map((r) => r.spm).filter((v) => !isNaN(v)).sort((a, b) => a - b);
+  if (spms.length < 10) return [];
+  const median = spms[Math.floor(spms.length / 2)];
+  const threshold = Math.max(15, median * 0.65);  // 中央値の 65% を目安
+  const spmGap = 3;  // しきい値下が 3 ストローク続いたら rep 終了
+
+  const spmReps = [];
+  let inActive = false;
+  let activeStart = 0;
+  let lowCount = 0;
+  for (let i = 0; i < data.length; i++) {
+    const spm = data[i].spm;
+    const high = !isNaN(spm) && spm >= threshold;
+    if (high) {
+      if (!inActive) { inActive = true; activeStart = i; }
+      lowCount = 0;
+    } else {
+      if (inActive) {
+        lowCount++;
+        if (lowCount >= spmGap) {
+          spmReps.push({ start: activeStart, end: i - lowCount });
+          inActive = false;
+          lowCount = 0;
+        }
+      }
+    }
+  }
+  if (inActive) spmReps.push({ start: activeStart, end: data.length - 1 });
+
+  // ノイズ (数ストロークだけの短い rep) は除外。最低 10 ストローク。
+  const filtered = spmReps.filter((r) => r.end - r.start + 1 >= 10);
+  return filtered.length >= 2 ? filtered : [];
+}
+
+function summarizeInterval(data, startIdx, endIdx) {
+  const rows = data.slice(startIdx, endIdx + 1);
+  const avgOf = (field) => {
+    const vals = rows.map((r) => r[field]).filter((v) => !isNaN(v));
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : NaN;
+  };
+  const sumDt = rows.reduce((acc, r) => acc + (r.dt_s || 0), 0);
+  return {
+    strokes: rows.length,
+    duration_s: sumDt,
+    startElapsed: rows[0].elapsed_s,
+    endElapsed: rows[rows.length - 1].elapsed_s,
+    avgSpm: avgOf("spm"),
+    avgHr: avgOf("hr"),
+    avgSplit: avgOf("split_s"),
+    avgPower: avgOf("power"),
+  };
+}
+
+function fmtSplit(seconds) {
+  if (isNaN(seconds)) return "–";
+  const m = Math.floor(seconds / 60);
+  const s = seconds - m * 60;
+  return `${m}:${s.toFixed(1).padStart(4, "0")}`;
+}
 // =========================================================================
 function getSessionDate(session) {
   // 優先: プリアンブルの Date フィールド。
@@ -1000,7 +1087,7 @@ function renderBarInto(canvas, summary, metric, colors) {
   chartRegistry.set(key, chart);
 }
 
-function renderTimelineInto(canvas, annotated, metric, zones, colors) {
+function renderTimelineInto(canvas, annotated, metric, zones, colors, intervals) {
   const key = canvas.id;
   if (chartRegistry.has(key)) chartRegistry.get(key).destroy();
   // 複合モードでは Y 軸を SPM にして、HR を点のサイズで表現すると視覚的に見やすい。
@@ -1053,9 +1140,45 @@ function renderTimelineInto(canvas, annotated, metric, zones, colors) {
       showLine: false,
     });
   }
+  // インターバル検出済みなら、各 rep の開始位置 (elapsed min) を渡して垂直線を描く。
+  const intervalStartMins = (intervals && intervals.length >= 2)
+    ? intervals.map((iv) => annotated[iv.start].elapsed_s / 60)
+    : null;
+
   const chart = new Chart(canvas.getContext("2d"), {
     type: "scatter",
     data: { datasets },
+    // rep 境界線を描く軽量プラグイン (annotation プラグイン不要で済ませる)。
+    plugins: intervalStartMins
+      ? [{
+          id: "repMarkers",
+          afterDatasetsDraw: (chart) => {
+            const { ctx, scales } = chart;
+            ctx.save();
+            ctx.strokeStyle = "rgba(100, 116, 139, 0.5)";
+            ctx.setLineDash([4, 4]);
+            ctx.lineWidth = 1;
+            ctx.fillStyle = "rgba(31, 41, 55, 0.8)";
+            ctx.font = "bold 10px -apple-system, sans-serif";
+            intervalStartMins.forEach((tMin, i) => {
+              if (i === 0) return;  // 最初の rep は描画端。
+              const x = scales.x.getPixelForValue(tMin);
+              ctx.beginPath();
+              ctx.moveTo(x, scales.y.top);
+              ctx.lineTo(x, scales.y.bottom);
+              ctx.stroke();
+            });
+            // Rep 番号ラベルは各 rep の開始位置の上部に。
+            ctx.setLineDash([]);
+            intervalStartMins.forEach((tMin, i) => {
+              const x = scales.x.getPixelForValue(tMin);
+              const label = `#${i + 1}`;
+              ctx.fillText(label, x + 3, scales.y.top + 11);
+            });
+            ctx.restore();
+          },
+        }]
+      : [],
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -1287,6 +1410,7 @@ function buildCard(session, metric, globalZones) {
     </div>
     <div class="detail ${detailOpen.get(session.id) ? "" : "hidden"}">
       <table id="summary-table"><thead><tr><th>ゾーン</th><th>時間</th><th>分</th><th>%</th></tr></thead><tbody></tbody></table>
+      <div class="intervals-block" style="margin-top: 10px;"></div>
       <div class="chart-timeline"><canvas></canvas></div>
     </div>
   `;
@@ -1307,10 +1431,63 @@ function buildCard(session, metric, globalZones) {
     `;
     tbody.appendChild(tr);
   }
+  // インターバル (rep) 検出 → テーブル出力。
+  const intervals = detectIntervals(data);
+  const intervalsBlock = card.querySelector(".intervals-block");
+  if (intervals.length >= 2) {
+    const rows = intervals.map((iv, idx) => {
+      const s = summarizeInterval(data, iv.start, iv.end);
+      // 各 rep 内のゾーン分布 (主要ゾーンだけ表示)。
+      const repRows = annotated.slice(iv.start, iv.end + 1);
+      const zoneTimes = {};
+      for (const zn of zoneNames) zoneTimes[zn] = 0;
+      for (const r of repRows) {
+        if (zoneTimes[r.zone] !== undefined) zoneTimes[r.zone] += r.dt_s || 0;
+      }
+      const topZone = zoneNames
+        .map((zn) => [zn, zoneTimes[zn]])
+        .filter((e) => e[1] > 0)
+        .sort((a, b) => b[1] - a[1])[0];
+      const topZoneLabel = topZone
+        ? `<span class="swatch" style="background:${colors[topZone[0]]}"></span>${escapeHtml(topZone[0])}`
+        : "–";
+      return `
+        <tr>
+          <td>${idx + 1}</td>
+          <td>${fmtSec(s.startElapsed)}</td>
+          <td>${fmtSec(s.duration_s)}</td>
+          <td>${s.strokes}</td>
+          <td>${isNaN(s.avgSpm) ? "–" : s.avgSpm.toFixed(1)}</td>
+          <td>${isNaN(s.avgHr) ? "–" : Math.round(s.avgHr)}</td>
+          <td>${isNaN(s.avgSplit) ? "–" : fmtSplit(s.avgSplit)}</td>
+          <td>${topZoneLabel}</td>
+        </tr>
+      `;
+    }).join("");
+    intervalsBlock.innerHTML = `
+      <details open>
+        <summary style="cursor: pointer; font-size: 0.9rem; color: var(--muted); margin-bottom: 6px;">
+          🏁 インターバル別 (${intervals.length} 本 検出) — クリックで折りたたみ
+        </summary>
+        <table id="summary-table" style="font-size: 0.82rem;">
+          <thead>
+            <tr>
+              <th>#</th><th>開始</th><th>時間</th><th>本数</th>
+              <th>SPM</th><th>HR</th><th>split</th><th>主ゾーン</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </details>
+    `;
+  } else {
+    intervalsBlock.innerHTML = "";
+  }
+
   const timelineCanvas = card.querySelector(".chart-timeline canvas");
   timelineCanvas.id = `timeline-${session.id}`;
   if (detailOpen.get(session.id)) {
-    renderTimelineInto(timelineCanvas, annotated, metric, zones, colors);
+    renderTimelineInto(timelineCanvas, annotated, metric, zones, colors, intervals);
   }
 
   // 各セッションのサマリをカードに保持 (CSV ダウンロード用)。
