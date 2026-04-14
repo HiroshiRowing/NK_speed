@@ -203,6 +203,42 @@
     flex-wrap: wrap;
   }
   #top-toolbar .count { color: var(--muted); font-size: 0.9rem; }
+  /* 累積サマリ (週/月) */
+  .accum-crew {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .accum-crew h3 {
+    margin: 0 0 4px;
+    font-size: 1rem;
+  }
+  .accum-crew .sub {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .accum-crew .accum-chart {
+    position: relative;
+    height: 220px;
+  }
+  .accum-crew table.accum-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    margin-top: 10px;
+  }
+  .accum-crew table.accum-table th,
+  .accum-crew table.accum-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+  }
+  .accum-crew table.accum-table th { color: var(--muted); font-weight: 500; }
+  .accum-crew table.accum-table th:first-child,
+  .accum-crew table.accum-table td:first-child { text-align: left; }
   .kpis { display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
   .kpi {
     flex: 1 1 140px;
@@ -305,6 +341,21 @@
 
     <!-- セッションカード: クルーごとに 1 枚 -->
     <div id="sessions-grid"></div>
+
+    <!-- 累積サマリ: シリアル毎に、週 or 月で束ねたゾーン滞在時間を表示。 -->
+    <div id="accumulated-section" class="hidden" style="margin-top: 24px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
+        <h2 style="margin: 0; font-size: 1rem; color: var(--muted);">📊 累積サマリ (シリアル別)</h2>
+        <div style="display: flex; gap: 6px; align-items: center; font-size: 0.9rem;">
+          <label for="accumulated-period">期間:</label>
+          <select id="accumulated-period">
+            <option value="week" selected>週間</option>
+            <option value="month">月間</option>
+          </select>
+        </div>
+      </div>
+      <div id="accumulated-container"></div>
+    </div>
   </section>
 </main>
 
@@ -495,7 +546,47 @@ function crewNameFor(session) {
 }
 
 // =========================================================================
-// Polar HR を NK のストロークに時刻で合わせる
+// セッション日時の抽出と、週間/月間の集計キー生成
+// =========================================================================
+function getSessionDate(session) {
+  // 優先: プリアンブルの Date フィールド。
+  if (session.metadata.date) {
+    // 想定: "2020-01-11" / "01-20-2020" / "2020/01/11" 等。
+    // "MM-DD-YYYY" 形式と ISO 形式の両対応を試みる。
+    const iso = new Date(session.metadata.date);
+    if (!isNaN(iso)) return iso;
+  }
+  // フォールバック: ファイル名中の YYYYMMDD パターン。
+  // 例: "SpdCoach 3145955 20260406 0454PM.csv" → 2026-04-06
+  const m = session.filename.match(/(\d{4})(\d{2})(\d{2})/);
+  if (m) {
+    const d = new Date(`${m[1]}-${m[2]}-${m[3]}`);
+    if (!isNaN(d)) return d;
+  }
+  return null;
+}
+
+function getPeriodKey(date, period) {
+  if (period === "month") {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  }
+  // ISO 週番号 (月曜起算)。例: "2026-W15"
+  const d = new Date(date.valueOf());
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 4 - (d.getDay() || 7));  // ISO: 木曜が含まれる週
+  const year = d.getFullYear();
+  const jan1 = new Date(year, 0, 1);
+  const weekNo = Math.ceil(((d - jan1) / 86400000 + 1) / 7);
+  return `${year}-W${String(weekNo).padStart(2, "0")}`;
+}
+
+function formatPeriodLabel(key, period) {
+  if (period === "month") return key;  // "2026-04"
+  // "2026-W15" を "2026 第15週" に整形
+  const m = key.match(/^(\d{4})-W(\d{2})$/);
+  if (!m) return key;
+  return `${m[1]} 第${parseInt(m[2], 10)}週`;
+}
 // =========================================================================
 // NK の各ストローク (elapsed_s) に対応する Polar HR を線形補間で算出する。
 // 両者とも「セッション開始からの経過秒」を軸に持つ。ただし
@@ -1212,11 +1303,160 @@ function removeSession(id) {
   renderAll();
 }
 
+// =========================================================================
+// 累積サマリ: シリアル別に週/月で束ねる
+// =========================================================================
+function renderAccumulated() {
+  const container = $("accumulated-container");
+  const section = $("accumulated-section");
+  if (!sessions.length) {
+    section.classList.add("hidden");
+    container.innerHTML = "";
+    return;
+  }
+
+  const metric = metricSelect.value;
+  const globalZones = readZonesFromUI();
+  const period = $("accumulated-period").value;
+
+  // シリアル (クルーキー) でグループ化。
+  const groups = new Map();
+  for (const s of sessions) {
+    const key = crewKeyFor(s);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  }
+
+  // 日付が取れないセッションがあれば注釈を出す。
+  let anyDated = false;
+  container.innerHTML = "";
+  for (const [key, crewSessions] of groups.entries()) {
+    const serial = crewSessions[0].metadata.serial;
+    const displayName = crewNameFor(crewSessions[0]);
+    const profile = serial ? athleteProfiles[serial] : null;
+    const zones = (profile && zonesFromProfile(profile, metric)) || globalZones;
+    const zoneNames = zones.map((z) => z.name);
+
+    // セッションを期間キーで束ねる。
+    const byPeriod = new Map();
+    let undated = 0;
+    for (const s of crewSessions) {
+      const d = getSessionDate(s);
+      if (!d) { undated++; continue; }
+      const pk = getPeriodKey(d, period);
+      if (!byPeriod.has(pk)) byPeriod.set(pk, []);
+      byPeriod.get(pk).push(s);
+    }
+    if (byPeriod.size === 0) {
+      // このクルーの全セッションで日付が取れなかった。
+      continue;
+    }
+    anyDated = true;
+
+    // 期間キーを昇順にソート。
+    const periodKeys = [...byPeriod.keys()].sort();
+
+    // 各期間について、ゾーン別の合計時間を計算。
+    const zoneTotals = {};
+    for (const zn of zoneNames) zoneTotals[zn] = new Array(periodKeys.length).fill(0);
+
+    for (let i = 0; i < periodKeys.length; i++) {
+      for (const s of byPeriod.get(periodKeys[i])) {
+        const data = sessionEffectiveData(s);
+        if (metric === "spm_hr"
+            ? !data.some((r) => !isNaN(r.spm) && !isNaN(r.hr))
+            : !data.some((r) => !isNaN(r[metric]))) continue;
+        const { summary } = analyze(data, metric, zones);
+        for (const r of summary) {
+          if (zoneTotals[r.zone] !== undefined) zoneTotals[r.zone][i] += r.time_s;
+        }
+      }
+    }
+
+    // DOM を生成。
+    const crewDiv = document.createElement("div");
+    crewDiv.className = "accum-crew";
+    const bandsStr = profile
+      ? ` · LT1=${profile.lt1_hr ?? "?"} / LT2=${profile.lt2_hr ?? "?"}`
+      : "";
+    crewDiv.innerHTML = `
+      <h3>${escapeHtml(displayName)}</h3>
+      <div class="sub">${serial ? `SN ${escapeHtml(serial)}` : "(no serial)"} · ${byPeriod.size} 期間 · 合計 ${crewSessions.length - undated} セッション${undated ? ` (日付不明 ${undated} 件を除外)` : ""}${bandsStr}</div>
+      <div class="accum-chart"><canvas></canvas></div>
+      <table class="accum-table"></table>
+    `;
+    container.appendChild(crewDiv);
+
+    // スタック棒グラフ (Chart.js)。
+    const canvas = crewDiv.querySelector("canvas");
+    canvas.id = `accum-${key.replace(/[^A-Za-z0-9]/g, "_")}`;
+    if (chartRegistry.has(canvas.id)) chartRegistry.get(canvas.id).destroy();
+    const colors = zoneColors(zoneNames);
+    const datasets = zoneNames.map((zn) => ({
+      label: zn,
+      data: zoneTotals[zn].map((s) => s / 60),  // 分単位
+      backgroundColor: colors[zn],
+    }));
+    const chart = new Chart(canvas.getContext("2d"), {
+      type: "bar",
+      data: {
+        labels: periodKeys.map((k) => formatPeriodLabel(k, period)),
+        datasets,
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: "bottom" },
+          tooltip: {
+            callbacks: {
+              label: (item) => {
+                const mins = item.raw;
+                const totalM = Math.floor(mins);
+                const secs = Math.round((mins - totalM) * 60);
+                return `${item.dataset.label}: ${totalM}:${String(secs).padStart(2, "0")}`;
+              },
+            },
+          },
+        },
+        scales: {
+          x: { stacked: true },
+          y: { stacked: true, title: { display: true, text: "Minutes" } },
+        },
+      },
+    });
+    chartRegistry.set(canvas.id, chart);
+
+    // テーブル (各期間の秒・分・合計)。
+    const table = crewDiv.querySelector("table.accum-table");
+    const headerRow = `<tr><th>期間</th>${zoneNames.map((z) => `<th>${escapeHtml(z)}</th>`).join("")}<th>合計</th></tr>`;
+    const bodyRows = periodKeys.map((pk, i) => {
+      const cells = zoneNames.map((zn) => fmtSec(zoneTotals[zn][i]));
+      const total = zoneNames.reduce((acc, zn) => acc + zoneTotals[zn][i], 0);
+      return `<tr><td>${escapeHtml(formatPeriodLabel(pk, period))}</td>${cells.map((c) => `<td>${c}</td>`).join("")}<td><b>${fmtSec(total)}</b></td></tr>`;
+    }).join("");
+    // 全期間合計行も追加。
+    const grandTotals = zoneNames.map((zn) => zoneTotals[zn].reduce((a, b) => a + b, 0));
+    const grandSum = grandTotals.reduce((a, b) => a + b, 0);
+    const footer = `<tr style="border-top: 2px solid var(--border); font-weight: 600;"><td>合計</td>${grandTotals.map((t) => `<td>${fmtSec(t)}</td>`).join("")}<td>${fmtSec(grandSum)}</td></tr>`;
+    table.innerHTML = `<thead>${headerRow}</thead><tbody>${bodyRows}${footer}</tbody>`;
+  }
+
+  if (!anyDated) {
+    container.innerHTML = '<div class="error">日付が特定できるセッションがありません (プリアンブルの Date か、ファイル名内の YYYYMMDD があれば自動抽出します)。</div>';
+  }
+  section.classList.remove("hidden");
+}
+
 function renderAll() {
   hideError();
   renderCrewEditor();
   renderSessionCards();
+  renderAccumulated();
 }
+
+// 期間セレクタの変更で再描画。(script 末尾なので DOM は読み込み済み)
+$("accumulated-period").addEventListener("change", renderAccumulated);
 
 // 設定変更 (指標 / ゾーン) 時に再描画するための旧 rerun 互換関数。
 function rerun() { renderAll(); }
