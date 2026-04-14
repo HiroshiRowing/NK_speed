@@ -1,0 +1,36 @@
+# docs/ をそのまま GitHub Pages に公開するワークフロー。
+# 有効化は一度だけ必要:
+#   GitHub リポジトリ → Settings → Pages → Build and deployment → Source: "GitHub Actions"
+# その後 main にマージされるたびに自動デプロイされ、公開 URL が発行される。
+name: Deploy docs to Pages
+
+on:
+  push:
+    branches: [main]
+  # Actions タブから手動実行もできるようにしておく。
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同時に複数デプロイが走らないように (古いものを中断はせず、完了後に新しいのを流す)。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v4
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v4

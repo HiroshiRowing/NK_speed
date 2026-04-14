@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NK SpeedCoach 強度ゾーン解析</title>
+<!-- Chart.js (可視化) と PapaParse (CSV パース) を CDN から読み込み。 -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --panel: #ffffff;
+    --border: #e3e6eb;
+    --accent: #2563eb;
+    --text: #1f2937;
+    --muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Hiragino Sans",
+                 "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  header {
+    padding: 24px 32px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  header h1 { margin: 0; font-size: 1.5rem; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 0.9rem; }
+  main {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 24px;
+    padding: 24px 32px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  @media (max-width: 800px) {
+    main { grid-template-columns: 1fr; }
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .panel h2 {
+    margin: 0 0 12px;
+    font-size: 1rem;
+    color: var(--muted);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  #drop-zone {
+    border: 2px dashed #9ca3af;
+    border-radius: 12px;
+    padding: 40px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    background: var(--panel);
+  }
+  #drop-zone:hover { background: #f0f4ff; }
+  #drop-zone.dragover {
+    background: #dbeafe;
+    border-color: var(--accent);
+  }
+  #drop-zone .big { font-size: 1.1rem; font-weight: 600; margin-bottom: 6px; }
+  #drop-zone .muted { color: var(--muted); font-size: 0.9rem; }
+  #drop-zone input[type=file] { display: none; }
+  label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 4px; }
+  select, input[type=number], input[type=text], button {
+    font: inherit;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    background: #fff;
+    color: var(--text);
+  }
+  select { width: 100%; }
+  button {
+    cursor: pointer;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 8px 14px;
+  }
+  button.ghost {
+    background: #fff;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+  }
+  table.zones {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  table.zones th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--muted);
+    padding: 4px;
+  }
+  table.zones td { padding: 2px; }
+  table.zones input {
+    width: 100%;
+    padding: 4px 6px;
+  }
+  table.zones .num { width: 60px; }
+  table.zones .del {
+    background: #fff;
+    color: #dc2626;
+    border: 1px solid var(--border);
+    padding: 4px 8px;
+  }
+  .zones-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .zones-actions button { flex: 1; font-size: 0.85rem; padding: 6px; }
+  #summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+    margin-top: 8px;
+  }
+  #summary-table th, #summary-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+  }
+  #summary-table th { color: var(--muted); font-weight: 500; }
+  #summary-table th:first-child, #summary-table td:first-child { text-align: left; }
+  #summary-table .swatch {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 2px;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .kpis { display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
+  .kpi {
+    flex: 1 1 140px;
+    padding: 10px 14px;
+    background: #f0f4ff;
+    border-radius: 8px;
+  }
+  .kpi .label { font-size: 0.75rem; color: var(--muted); }
+  .kpi .value { font-size: 1.2rem; font-weight: 600; }
+  .chart-wrap { position: relative; height: 300px; }
+  #timeline-wrap { height: 320px; }
+  .error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+  }
+  .hidden { display: none; }
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.8rem;
+    padding: 24px;
+  }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🚣 NK SpeedCoach 強度ゾーン解析</h1>
+  <p>NK SpeedCoach の CSV をドラッグ&ドロップすると、ゾーン別の滞在時間が表示されます。ファイルはブラウザ内だけで処理され、どこにも送信されません。</p>
+</header>
+
+<main>
+  <!-- 左カラム: 設定 -->
+  <aside>
+    <div class="panel" style="margin-bottom: 16px;">
+      <h2>指標</h2>
+      <label for="metric">ゾーン分けに使う値</label>
+      <select id="metric">
+        <option value="spm">ストロークレート (SPM)</option>
+        <option value="hr">心拍 (HR, bpm)</option>
+        <option value="split_s">500m スプリット (秒)</option>
+        <option value="power">パワー (W)</option>
+      </select>
+    </div>
+
+    <div class="panel">
+      <h2>ゾーン境界</h2>
+      <table class="zones">
+        <thead>
+          <tr><th>名前</th><th>下限</th><th>上限</th><th></th></tr>
+        </thead>
+        <tbody id="zones-body"></tbody>
+      </table>
+      <div class="zones-actions">
+        <button id="zones-add" class="ghost" type="button">＋ 追加</button>
+        <button id="zones-reset" class="ghost" type="button">プリセット</button>
+      </div>
+      <p style="font-size: 0.78rem; color: var(--muted); margin: 10px 0 0;">
+        下限は含む / 上限は含まない。空欄にすると「下限なし」「上限なし」になります。
+      </p>
+    </div>
+  </aside>
+
+  <!-- 右カラム: ドロップと結果 -->
+  <section>
+    <div id="drop-zone">
+      <div class="big">CSV をここにドロップ</div>
+      <div class="muted">クリックしてファイルを選択することもできます</div>
+      <input type="file" id="file-input" accept=".csv">
+    </div>
+
+    <div id="error" class="error hidden" style="margin-top: 16px;"></div>
+
+    <div id="results" class="hidden" style="margin-top: 16px;">
+      <div class="kpis">
+        <div class="kpi"><div class="label">総セッション時間</div><div class="value" id="kpi-total">–</div></div>
+        <div class="kpi"><div class="label">指標</div><div class="value" id="kpi-metric">–</div></div>
+        <div class="kpi"><div class="label">ファイル</div><div class="value" id="kpi-file" style="font-size: 0.95rem;">–</div></div>
+      </div>
+
+      <div class="panel" style="margin-bottom: 16px;">
+        <h2>ゾーン別滞在時間</h2>
+        <div class="chart-wrap"><canvas id="bar-chart"></canvas></div>
+        <table id="summary-table">
+          <thead>
+            <tr><th>ゾーン</th><th>時間</th><th>分</th><th>%</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div style="margin-top: 12px;">
+          <button id="download-csv" type="button">📥 サマリ CSV をダウンロード</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>タイムライン (ゾーンで色分け)</h2>
+        <div id="timeline-wrap"><canvas id="timeline-chart"></canvas></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  NK SpeedCoach は Nielsen-Kellerman の登録商標です。このツールは非公式です。 ·
+  <a href="https://github.com/HiroshiRowing/NK_speed">ソース</a>
+</footer>
+
+<script>
+// =========================================================================
+// プリセット (Python 版と同じ境界値)
+// =========================================================================
+const PRESETS = {
+  spm: [
+    { name: "R (~16)",     max: 16 },
+    { name: "UT2 (16-21)", min: 16, max: 22 },
+    { name: "UT1 (22-25)", min: 22, max: 26 },
+    { name: "AT (26-29)",  min: 26, max: 30 },
+    { name: "TR (30-33)",  min: 30, max: 34 },
+    { name: "AN (34+)",    min: 34 },
+  ],
+  hr: [
+    { name: "Z1 (~130)",    max: 130 },
+    { name: "Z2 (130-149)", min: 130, max: 150 },
+    { name: "Z3 (150-164)", min: 150, max: 165 },
+    { name: "Z4 (165-179)", min: 165, max: 180 },
+    { name: "Z5 (180+)",    min: 180 },
+  ],
+  split_s: [
+    { name: "UT2 (2:10+)",     min: 130 },
+    { name: "UT1 (2:00-2:09)", min: 120, max: 130 },
+    { name: "AT  (1:50-1:59)", min: 110, max: 120 },
+    { name: "TR  (1:40-1:49)", min: 100, max: 110 },
+    { name: "AN  (~1:39)",     max: 100 },
+  ],
+  power: [
+    { name: "Z1 (~150W)",    max: 150 },
+    { name: "Z2 (150-199W)", min: 150, max: 200 },
+    { name: "Z3 (200-249W)", min: 200, max: 250 },
+    { name: "Z4 (250-299W)", min: 250, max: 300 },
+    { name: "Z5 (300W+)",    min: 300 },
+  ],
+};
+
+const METRIC_LABELS = {
+  spm: "ストロークレート",
+  hr: "心拍",
+  split_s: "500m スプリット",
+  power: "パワー",
+};
+
+// tab10 風のパレット。Unknown は灰色。
+const PALETTE = ["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"];
+const UNKNOWN_COLOR = "#999999";
+
+// =========================================================================
+// DOM 参照
+// =========================================================================
+const $ = (id) => document.getElementById(id);
+const dropZone = $("drop-zone");
+const fileInput = $("file-input");
+const metricSelect = $("metric");
+const zonesBody = $("zones-body");
+const resultsDiv = $("results");
+const errorDiv = $("error");
+
+// 状態: 直近にパースしたデータ
+let lastData = null;
+let lastFileName = null;
+let barChart = null;
+let timelineChart = null;
+
+// =========================================================================
+// CSV 読み込み・前処理
+// =========================================================================
+function findHeaderRow(text) {
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const low = lines[i].toLowerCase();
+    if (low.includes("interval") && low.includes("elapsed time")) return i;
+    if (low.includes("stroke rate") && (low.includes("elapsed") || low.includes("distance"))) return i;
+  }
+  return -1;
+}
+
+function parseTimeSeconds(value) {
+  // HH:MM:SS.s / MM:SS.s / 数値 -> 秒
+  if (value == null) return NaN;
+  if (typeof value === "number") return value;
+  const s = String(value).trim();
+  if (!s || s.toLowerCase() === "nan") return NaN;
+  const parts = s.split(":");
+  let sec = 0;
+  for (const p of parts) {
+    const v = parseFloat(p);
+    if (isNaN(v)) return NaN;
+    sec = sec * 60 + v;
+  }
+  return sec;
+}
+
+function findColumn(columns, ...keywords) {
+  return columns.find((c) => {
+    const low = c.toLowerCase();
+    return keywords.every((k) => low.includes(k.toLowerCase()));
+  });
+}
+
+function parseNkCsv(text) {
+  const headerIdx = findHeaderRow(text);
+  const csvPart = headerIdx >= 0
+    ? text.split(/\r?\n/).slice(headerIdx).join("\n")
+    : text;
+  const parsed = Papa.parse(csvPart, {
+    header: true,
+    skipEmptyLines: "greedy",
+  });
+  if (parsed.errors && parsed.errors.length) {
+    // パース中の警告はログだけ残す (致命的エラーだけ後で判定)。
+    console.warn("CSV parse warnings:", parsed.errors.slice(0, 3));
+  }
+  return parsed.data;
+}
+
+function prepare(rows) {
+  if (!rows || !rows.length) return [];
+  // 空行・全列空のゴミ行を除く。
+  const cleaned = rows.filter((r) => Object.values(r).some((v) => v !== "" && v != null));
+  if (!cleaned.length) return [];
+
+  const cols = Object.keys(cleaned[0]).map((c) => c.trim());
+  // 元データの列名は空白混じりのことがあるので、見つけた列名から値を引く関数。
+  const rawCols = Object.keys(cleaned[0]);
+  const findRaw = (...kw) => {
+    const idx = cols.findIndex((c) => {
+      const low = c.toLowerCase();
+      return kw.every((k) => low.includes(k.toLowerCase()));
+    });
+    return idx >= 0 ? rawCols[idx] : null;
+  };
+
+  const elapsedCol  = findRaw("elapsed", "time");
+  // `distance/stroke` が引っかからないよう除外。
+  const distanceCol = (() => {
+    for (const c of cols) {
+      const low = c.toLowerCase();
+      if (low.includes("distance") && low.includes("gps") && !low.includes("stroke")) {
+        return rawCols[cols.indexOf(c)];
+      }
+    }
+    return null;
+  })();
+  const splitCol  = findRaw("split", "gps") || findRaw("split");
+  const spmCol    = findRaw("stroke", "rate");
+  const hrCol     = findRaw("heart", "rate");
+  const powerCol  = findRaw("power");
+
+  const out = [];
+  let prevElapsed = null;
+  for (const r of cleaned) {
+    const elapsed = elapsedCol ? parseTimeSeconds(r[elapsedCol]) : NaN;
+    let dt = 0;
+    if (prevElapsed != null && !isNaN(elapsed)) {
+      dt = elapsed - prevElapsed;
+      // リセット等で負になったり極端に大きい(30秒超)場合は 0 扱い。
+      if (dt < 0 || dt > 30) dt = 0;
+    }
+    if (!isNaN(elapsed)) prevElapsed = elapsed;
+
+    out.push({
+      elapsed_s:  elapsed,
+      dt_s:       dt,
+      split_s:    splitCol   ? parseTimeSeconds(r[splitCol])          : NaN,
+      spm:        spmCol     ? parseFloat(r[spmCol])                   : NaN,
+      hr:         hrCol      ? parseFloat(r[hrCol])                    : NaN,
+      power:      powerCol   ? parseFloat(r[powerCol])                 : NaN,
+      distance_m: distanceCol? parseFloat(r[distanceCol])              : NaN,
+    });
+  }
+  return out;
+}
+
+// =========================================================================
+// ゾーン分け & 集計
+// =========================================================================
+function classifyZone(value, zones) {
+  if (value == null || isNaN(value)) return "Unknown";
+  for (let i = 0; i < zones.length; i++) {
+    const z = zones[i];
+    const lo = (z.min ?? -Infinity);
+    const hi = (z.max ?? Infinity);
+    const isLast = i === zones.length - 1;
+    if (isLast ? value >= lo && value <= hi : value >= lo && value < hi) {
+      return z.name;
+    }
+  }
+  return "Unknown";
+}
+
+function analyze(data, metric, zones) {
+  // 各ストロークにゾーン名を付与。
+  const annotated = data.map((r) => ({
+    ...r,
+    zone: classifyZone(r[metric], zones),
+  }));
+  const sums = {};
+  let total = 0;
+  for (const r of annotated) {
+    sums[r.zone] = (sums[r.zone] || 0) + r.dt_s;
+    total += r.dt_s;
+  }
+  const orderedNames = zones.map((z) => z.name);
+  if (sums.Unknown && !orderedNames.includes("Unknown")) orderedNames.push("Unknown");
+  const summary = orderedNames.map((name) => ({
+    zone: name,
+    time_s: sums[name] || 0,
+    time_min: (sums[name] || 0) / 60,
+    pct: total > 0 ? ((sums[name] || 0) / total) * 100 : 0,
+  }));
+  return { annotated, summary, total };
+}
+
+// =========================================================================
+// 表示 (KPI / 表 / グラフ)
+// =========================================================================
+function fmtSec(s) {
+  const m = Math.floor(s / 60);
+  const sec = Math.round(s - m * 60);
+  return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+function zoneColors(zoneNames) {
+  const map = {};
+  let idx = 0;
+  for (const name of zoneNames) {
+    if (name === "Unknown") {
+      map[name] = UNKNOWN_COLOR;
+    } else {
+      map[name] = PALETTE[idx % PALETTE.length];
+      idx++;
+    }
+  }
+  return map;
+}
+
+function renderSummaryTable(summary, colors) {
+  const tbody = document.querySelector("#summary-table tbody");
+  tbody.innerHTML = "";
+  for (const r of summary) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><span class="swatch" style="background:${colors[r.zone]}"></span>${r.zone}</td>
+      <td>${fmtSec(r.time_s)}</td>
+      <td>${r.time_min.toFixed(2)}</td>
+      <td>${r.pct.toFixed(1)}%</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+function renderBar(summary, metric, colors) {
+  const ctx = $("bar-chart").getContext("2d");
+  if (barChart) barChart.destroy();
+  barChart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: summary.map((r) => r.zone),
+      datasets: [{
+        data: summary.map((r) => r.time_min),
+        backgroundColor: summary.map((r) => colors[r.zone]),
+      }],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (item) => {
+              const r = summary[item.dataIndex];
+              return `${fmtSec(r.time_s)}  (${r.pct.toFixed(1)}%)`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { title: { display: true, text: "Minutes" } },
+      },
+    },
+  });
+}
+
+function renderTimeline(annotated, metric, zones, colors) {
+  const ctx = $("timeline-chart").getContext("2d");
+  if (timelineChart) timelineChart.destroy();
+  // ゾーン別に散布点をまとめる (legend に使える)。
+  const datasets = [];
+  const zoneNames = zones.map((z) => z.name).concat(
+    annotated.some((r) => r.zone === "Unknown") ? ["Unknown"] : []
+  );
+  for (const name of zoneNames) {
+    const pts = [];
+    for (const r of annotated) {
+      if (r.zone === name && !isNaN(r[metric]) && !isNaN(r.elapsed_s)) {
+        pts.push({ x: r.elapsed_s / 60, y: r[metric] });
+      }
+    }
+    if (!pts.length) continue;
+    datasets.push({
+      label: name,
+      data: pts,
+      backgroundColor: colors[name],
+      borderColor: colors[name],
+      pointRadius: 2,
+      showLine: false,
+    });
+  }
+  timelineChart = new Chart(ctx, {
+    type: "scatter",
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: "bottom" },
+      },
+      scales: {
+        x: { title: { display: true, text: "Elapsed (min)" } },
+        y: {
+          title: { display: true, text: metric },
+          // スプリットは小さいほど速いので軸を反転すると直感的。
+          reverse: metric === "split_s",
+        },
+      },
+    },
+  });
+}
+
+function showError(msg) {
+  errorDiv.textContent = msg;
+  errorDiv.classList.remove("hidden");
+  resultsDiv.classList.add("hidden");
+}
+
+function hideError() {
+  errorDiv.classList.add("hidden");
+  errorDiv.textContent = "";
+}
+
+function rerun() {
+  if (!lastData) return;
+  hideError();
+  const metric = metricSelect.value;
+  const zones = readZonesFromUI();
+  if (!zones.length) {
+    showError("ゾーンが 1 つもありません。少なくとも 1 行追加してください。");
+    return;
+  }
+  // 指標の列が空 (全て NaN) なら弾く。
+  const hasValue = lastData.some((r) => !isNaN(r[metric]));
+  if (!hasValue) {
+    showError(`この CSV には「${METRIC_LABELS[metric]}」に対応するデータがありませんでした。別の指標を選んでください。`);
+    return;
+  }
+
+  const { annotated, summary, total } = analyze(lastData, metric, zones);
+  const zoneNames = summary.map((r) => r.zone);
+  const colors = zoneColors(zoneNames);
+
+  $("kpi-total").textContent = fmtSec(total);
+  $("kpi-metric").textContent = METRIC_LABELS[metric];
+  $("kpi-file").textContent = lastFileName || "–";
+
+  renderSummaryTable(summary, colors);
+  renderBar(summary, metric, colors);
+  renderTimeline(annotated, metric, zones, colors);
+
+  resultsDiv.classList.remove("hidden");
+  // ダウンロード用に最新のサマリを保持。
+  resultsDiv.dataset.summary = JSON.stringify(summary);
+}
+
+// =========================================================================
+// ゾーンエディタ UI
+// =========================================================================
+function buildZoneRow(z = { name: "", min: null, max: null }) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td><input type="text" value="${z.name ?? ""}" placeholder="名前"></td>
+    <td><input type="number" step="any" class="num" value="${z.min ?? ""}" placeholder="−∞"></td>
+    <td><input type="number" step="any" class="num" value="${z.max ?? ""}" placeholder="+∞"></td>
+    <td><button type="button" class="del">×</button></td>
+  `;
+  tr.querySelector(".del").addEventListener("click", () => {
+    tr.remove();
+    rerun();
+  });
+  tr.querySelectorAll("input").forEach((inp) => {
+    inp.addEventListener("change", rerun);
+  });
+  return tr;
+}
+
+function loadPreset(metric) {
+  zonesBody.innerHTML = "";
+  for (const z of PRESETS[metric]) {
+    zonesBody.appendChild(buildZoneRow(z));
+  }
+}
+
+function readZonesFromUI() {
+  const zones = [];
+  for (const tr of zonesBody.querySelectorAll("tr")) {
+    const inputs = tr.querySelectorAll("input");
+    const name = inputs[0].value.trim();
+    const minStr = inputs[1].value.trim();
+    const maxStr = inputs[2].value.trim();
+    if (!name && !minStr && !maxStr) continue;
+    const z = { name: name || "(unnamed)" };
+    if (minStr !== "") z.min = parseFloat(minStr);
+    if (maxStr !== "") z.max = parseFloat(maxStr);
+    zones.push(z);
+  }
+  return zones;
+}
+
+$("zones-add").addEventListener("click", () => {
+  zonesBody.appendChild(buildZoneRow());
+});
+$("zones-reset").addEventListener("click", () => {
+  loadPreset(metricSelect.value);
+  rerun();
+});
+metricSelect.addEventListener("change", () => {
+  loadPreset(metricSelect.value);
+  rerun();
+});
+loadPreset("spm");
+
+// =========================================================================
+// ファイル取り込み (ドロップ / クリック選択)
+// =========================================================================
+function handleFile(file) {
+  if (!file) return;
+  lastFileName = file.name;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const text = e.target.result;
+      const rows = parseNkCsv(text);
+      if (!rows.length) {
+        showError("CSV にデータ行が見つかりませんでした。NK SpeedCoach のエクスポート CSV か確認してください。");
+        lastData = null;
+        return;
+      }
+      lastData = prepare(rows);
+      if (!lastData.length) {
+        showError("CSV から解釈できるストロークデータがありませんでした。");
+        return;
+      }
+      rerun();
+    } catch (err) {
+      console.error(err);
+      showError("読み込み中にエラー: " + err.message);
+    }
+  };
+  reader.onerror = () => showError("ファイルの読み込みに失敗しました。");
+  reader.readAsText(file);
+}
+
+dropZone.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", (e) => handleFile(e.target.files[0]));
+
+// ページ全体でドロップできるようにしつつ、視覚的なハイライトは drop-zone に。
+["dragenter", "dragover"].forEach((ev) => {
+  document.addEventListener(ev, (e) => {
+    e.preventDefault();
+    dropZone.classList.add("dragover");
+  });
+});
+["dragleave", "drop"].forEach((ev) => {
+  document.addEventListener(ev, (e) => {
+    e.preventDefault();
+    dropZone.classList.remove("dragover");
+  });
+});
+document.addEventListener("drop", (e) => {
+  const file = e.dataTransfer && e.dataTransfer.files[0];
+  if (file) handleFile(file);
+});
+
+// =========================================================================
+// サマリ CSV ダウンロード
+// =========================================================================
+$("download-csv").addEventListener("click", () => {
+  const raw = resultsDiv.dataset.summary;
+  if (!raw) return;
+  const summary = JSON.parse(raw);
+  const header = ["zone", "time_s", "time_min", "pct"];
+  const lines = [header.join(",")];
+  for (const r of summary) {
+    lines.push([
+      `"${r.zone.replace(/"/g, '""')}"`,
+      r.time_s.toFixed(2),
+      r.time_min.toFixed(4),
+      r.pct.toFixed(2),
+    ].join(","));
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const base = (lastFileName || "session").replace(/\.csv$/i, "");
+  a.download = `${base}_time_in_zones.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+</script>
+
+</body>
+</html>
