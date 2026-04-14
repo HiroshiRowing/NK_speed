@@ -469,6 +469,9 @@ const chartRegistry = new Map();
 // カードの詳細表示状態 (セッション ID → bool)。
 const detailOpen = new Map();
 
+// セッション ID → 手動で指定された本数 (自動検出を上書き)。
+const manualRepCounts = new Map();
+
 // シリアル番号 → ユーザ指定のクルー名。ブラウザに保存して次回も引き継ぐ。
 const CREW_NAMES_KEY = "nk_crew_names_v1";
 let crewNames = (() => {
@@ -569,8 +572,55 @@ function crewNameFor(session) {
 //      記録されない → 間隔が空いて見えないので、SPM が一定以上 (しきい値)に
 //      連続して達している区間を rep とみなす。
 // 2 本以上検出できたら rep 分けされたとみなして UI に表示する。
-function detectIntervals(data) {
+function detectIntervals(data, options) {
   if (!data || data.length < 2) return [];
+  const opts = options || {};
+
+  // ユーザ手動指定の本数があれば、ストローク数を均等に分割する (明示指定が最優先)。
+  if (opts.manualRepCount && opts.manualRepCount >= 2) {
+    const n = Math.min(opts.manualRepCount, data.length);
+    const size = data.length / n;
+    const manual = [];
+    for (let i = 0; i < n; i++) {
+      manual.push({ start: Math.floor(i * size), end: Math.floor((i + 1) * size) - 1 });
+    }
+    return manual;
+  }
+
+  // 方式 0: NK の Interval 列。器機側で振られた segment 番号で分割。
+  // インターバルワークアウト機能を使って記録したセッションで最も正確。
+  // 連続する同じ interval_idx のグループを切り出し、短すぎる rest セグメントは除外。
+  if (data[0].interval_idx !== undefined && !isNaN(data[0].interval_idx)) {
+    const groups = [];
+    let start = 0;
+    for (let i = 1; i < data.length; i++) {
+      if (data[i].interval_idx !== data[i - 1].interval_idx) {
+        groups.push({ start, end: i - 1 });
+        start = i;
+      }
+    }
+    groups.push({ start, end: data.length - 1 });
+    // NK が ON / OFF を別 interval として記録している場合、
+    // 平均 SPM が低いグループは rest とみなして除外する。
+    if (groups.length >= 3) {
+      const groupSpm = groups.map((g) => {
+        const vals = data.slice(g.start, g.end + 1).map((r) => r.spm).filter((v) => !isNaN(v));
+        return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : NaN;
+      });
+      const validSpms = groupSpm.filter((v) => !isNaN(v)).sort((a, b) => a - b);
+      if (validSpms.length >= 2) {
+        // work グループ = SPM 中央値以上。rest グループを除外する閾値は中央値の 70%。
+        const median = validSpms[Math.floor(validSpms.length / 2)];
+        const threshold = Math.max(15, median * 0.7);
+        const workGroups = groups.filter((g, i) => {
+          if (isNaN(groupSpm[i])) return true;
+          return groupSpm[i] >= threshold;
+        });
+        if (workGroups.length >= 2) return workGroups;
+      }
+    }
+    if (groups.length >= 2) return groups;
+  }
 
   // 方式 1: 時刻ギャップベース
   const gapThreshold = 15;  // 秒
@@ -943,6 +993,16 @@ function prepare(rows) {
   const spmCol    = findRaw("stroke", "rate");
   const hrCol     = findRaw("heart", "rate");
   const powerCol  = findRaw("power");
+  // NK SpeedCoach の "Interval" 列: インターバルワークアウト機能を使うと、各セグメント
+  // (ON/OFF ペアや rep ごと) に 1, 2, 3,... と番号が振られる。これを使うと rep 境界が
+  // 機器側で既に切ってあるので、時刻ギャップや SPM 推定より正確。
+  const intervalCol = (() => {
+    // "Interval" 単独の列 (他の "Interval Distance" 等と区別)。
+    for (const c of cols) {
+      if (c.toLowerCase().trim() === "interval") return rawCols[cols.indexOf(c)];
+    }
+    return null;
+  })();
 
   const out = [];
   let prevElapsed = null;
@@ -964,6 +1024,7 @@ function prepare(rows) {
       hr:         hrCol      ? parseFloat(r[hrCol])                    : NaN,
       power:      powerCol   ? parseFloat(r[powerCol])                 : NaN,
       distance_m: distanceCol? parseFloat(r[distanceCol])              : NaN,
+      interval_idx: intervalCol ? parseInt(r[intervalCol], 10)         : NaN,
     });
   }
   return out;
@@ -1432,7 +1493,8 @@ function buildCard(session, metric, globalZones) {
     tbody.appendChild(tr);
   }
   // インターバル (rep) 検出 → テーブル出力。
-  const intervals = detectIntervals(data);
+  const manualN = manualRepCounts.get(session.id);
+  const intervals = detectIntervals(data, manualN ? { manualRepCount: manualN } : undefined);
   const intervalsBlock = card.querySelector(".intervals-block");
   if (intervals.length >= 2) {
     // summary は zone 昇順 (Z1 → Z3 他) になっているのでそこから zoneNames を取り出す。
@@ -1466,11 +1528,20 @@ function buildCard(session, metric, globalZones) {
         </tr>
       `;
     }).join("");
+    const manualNote = manualN
+      ? `<span style="color: #059669; font-size: 0.8rem;">(手動: ${manualN} 本に等分割)</span>`
+      : `<span style="color: var(--muted); font-size: 0.8rem;">(自動検出)</span>`;
     intervalsBlock.innerHTML = `
       <details open>
         <summary style="cursor: pointer; font-size: 0.9rem; color: var(--muted); margin-bottom: 6px;">
-          🏁 インターバル別 (${intervals.length} 本 検出) — クリックで折りたたみ
+          🏁 インターバル別 (${intervals.length} 本) ${manualNote}
         </summary>
+        <div style="font-size: 0.82rem; margin: 6px 0; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          自動検出が合わない場合、本数を指定:
+          <input type="number" min="2" max="50" step="1" data-act="manual-rep" value="${manualN || ""}" placeholder="例: 12" style="width: 70px; padding: 2px 6px;">
+          <button data-act="apply-manual" style="font-size: 0.78rem; padding: 2px 10px;">適用</button>
+          ${manualN ? '<button data-act="clear-manual" class="ghost" style="font-size: 0.78rem; padding: 2px 10px;">自動に戻す</button>' : ""}
+        </div>
         <table id="summary-table" style="font-size: 0.82rem;">
           <thead>
             <tr>
@@ -1483,7 +1554,35 @@ function buildCard(session, metric, globalZones) {
       </details>
     `;
   } else {
-    intervalsBlock.innerHTML = "";
+    // 検出 2 本未満でも手動指定のオプションは提供する。
+    intervalsBlock.innerHTML = `
+      <div style="font-size: 0.82rem; color: var(--muted); margin-top: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        🏁 インターバル未検出。手動で本数を指定して等分割:
+        <input type="number" min="2" max="50" step="1" data-act="manual-rep" placeholder="例: 12" style="width: 70px; padding: 2px 6px;">
+        <button data-act="apply-manual" style="font-size: 0.78rem; padding: 2px 10px;">適用</button>
+      </div>
+    `;
+  }
+  // 手動指定ボタンの配線。
+  const applyBtn = intervalsBlock.querySelector('[data-act="apply-manual"]');
+  const manualInput = intervalsBlock.querySelector('[data-act="manual-rep"]');
+  const clearBtn = intervalsBlock.querySelector('[data-act="clear-manual"]');
+  if (applyBtn && manualInput) {
+    const apply = () => {
+      const v = parseInt(manualInput.value, 10);
+      if (v >= 2 && v <= 50) {
+        manualRepCounts.set(session.id, v);
+        renderSessionCards();
+      }
+    };
+    applyBtn.addEventListener("click", apply);
+    manualInput.addEventListener("keydown", (e) => { if (e.key === "Enter") apply(); });
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      manualRepCounts.delete(session.id);
+      renderSessionCards();
+    });
   }
 
   const timelineCanvas = card.querySelector(".chart-timeline canvas");
