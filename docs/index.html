@@ -679,11 +679,17 @@ function summarizeInterval(data, startIdx, endIdx) {
     return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : NaN;
   };
   const sumDt = rows.reduce((acc, r) => acc + (r.dt_s || 0), 0);
+  // 開始時刻はセッション通算 (インターバル毎にリセットされる elapsed_s ではなく
+  // dt_s の累積で計算した session_elapsed_s) を使う。
+  const startSec = rows[0].session_elapsed_s !== undefined && !isNaN(rows[0].session_elapsed_s)
+    ? rows[0].session_elapsed_s : rows[0].elapsed_s;
+  const endSec = rows[rows.length - 1].session_elapsed_s !== undefined && !isNaN(rows[rows.length - 1].session_elapsed_s)
+    ? rows[rows.length - 1].session_elapsed_s : rows[rows.length - 1].elapsed_s;
   return {
     strokes: rows.length,
     duration_s: sumDt,
-    startElapsed: rows[0].elapsed_s,
-    endElapsed: rows[rows.length - 1].elapsed_s,
+    startElapsed: startSec,
+    endElapsed: endSec,
     avgSpm: avgOf("spm"),
     avgHr: avgOf("hr"),
     avgSplit: avgOf("split_s"),
@@ -1025,6 +1031,8 @@ function prepare(rows) {
 
   const out = [];
   let prevElapsed = null;
+  let cumulative = 0;  // NK のインターバルモードは rep 毎に Elapsed をリセットするので、
+                        // dt_s を累積してセッション全体の時間軸を再構築する。
   for (const r of cleaned) {
     const elapsed = elapsedCol ? parseTimeSeconds(r[elapsedCol]) : NaN;
     let dt = 0;
@@ -1034,9 +1042,11 @@ function prepare(rows) {
       if (dt < 0 || dt > 30) dt = 0;
     }
     if (!isNaN(elapsed)) prevElapsed = elapsed;
+    cumulative += dt;
 
     out.push({
       elapsed_s:  elapsed,
+      session_elapsed_s: cumulative,  // rep 境界をまたいだ通算経過秒
       dt_s:       dt,
       split_s:    splitCol   ? parseTimeSeconds(r[splitCol])          : NaN,
       spm:        spmCol     ? parseFloat(r[spmCol])                   : NaN,
@@ -1206,8 +1216,11 @@ function renderTimelineInto(canvas, annotated, metric, zones, colors, intervals)
   for (const name of zoneNames) {
     const pts = [];
     for (const r of annotated) {
-      if (r.zone === name && !isNaN(r[yKey]) && !isNaN(r.elapsed_s)) {
-        pts.push({ x: r.elapsed_s / 60, y: r[yKey] });
+      // NK インターバルモードは rep 毎に elapsed_s をリセットするので、
+      // セッション通算の session_elapsed_s を使う (prepare() で dt_s 累積)。
+      const xSec = !isNaN(r.session_elapsed_s) ? r.session_elapsed_s : r.elapsed_s;
+      if (r.zone === name && !isNaN(r[yKey]) && !isNaN(xSec)) {
+        pts.push({ x: xSec / 60, y: r[yKey] });
       }
     }
     if (!pts.length) continue;
@@ -1220,9 +1233,13 @@ function renderTimelineInto(canvas, annotated, metric, zones, colors, intervals)
       showLine: false,
     });
   }
-  // インターバル検出済みなら、各 rep の開始位置 (elapsed min) を渡して垂直線を描く。
+  // インターバル検出済みなら、各 rep の開始位置 (セッション通算の分) を渡して垂直線を描く。
   const intervalStartMins = (intervals && intervals.length >= 2)
-    ? intervals.map((iv) => annotated[iv.start].elapsed_s / 60)
+    ? intervals.map((iv) => {
+        const r = annotated[iv.start];
+        const sec = !isNaN(r.session_elapsed_s) ? r.session_elapsed_s : r.elapsed_s;
+        return sec / 60;
+      })
     : null;
 
   const chart = new Chart(canvas.getContext("2d"), {
