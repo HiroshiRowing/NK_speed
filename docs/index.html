@@ -798,7 +798,17 @@ function sessionEffectiveData(session) {
 // CSV 読み込み・前処理
 // =========================================================================
 function findHeaderRow(text) {
+  // NK SpeedCoach CSV は複数セクションを含むので、まず "Per-Stroke Data:" マーカー
+  // 以降から検索する。これで Session Summary / Interval Summaries の表を誤認しない。
   const lines = text.split(/\r?\n/);
+  const perStrokeIdx = lines.findIndex((l) => /per[-\s]?stroke/i.test(l));
+  const searchFrom = perStrokeIdx >= 0 ? perStrokeIdx + 1 : 0;
+  for (let i = searchFrom; i < lines.length; i++) {
+    const low = lines[i].toLowerCase();
+    if (low.includes("interval") && low.includes("elapsed time")) return i;
+    if (low.includes("stroke rate") && (low.includes("elapsed") || low.includes("distance"))) return i;
+  }
+  // フォールバック: 従来のロジック (Per-Stroke Data マーカー無しの簡素な CSV 向け)。
   for (let i = 0; i < lines.length; i++) {
     const low = lines[i].toLowerCase();
     if (low.includes("interval") && low.includes("elapsed time")) return i;
@@ -958,7 +968,16 @@ function parseNkCsv(text) {
     // パース中の警告はログだけ残す (致命的エラーだけ後で判定)。
     console.warn("CSV parse warnings:", parsed.errors.slice(0, 3));
   }
-  return { metadata, rows: parsed.data };
+  // NK CSV はヘッダ行直下に「単位行」("(Interval)", "(Meters)", "(HH:MM:SS.tenths)" 等)
+  // が入る形式がある。値が "(xxx)" のように括弧で始まる列が半数以上を占める行は
+  // データ行ではないので除外する。
+  const rows = parsed.data.filter((r) => {
+    const vals = Object.values(r).filter((v) => v != null && String(v).trim() !== "");
+    if (!vals.length) return false;
+    const parenCount = vals.filter((v) => String(v).trim().startsWith("(")).length;
+    return parenCount < vals.length / 2;
+  });
+  return { metadata, rows };
 }
 
 function prepare(rows) {
